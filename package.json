@@ -1,8 +1,8 @@
 {
   "name": "buggle-capture-helper",
-  "version": "0.1.0",
-  "description": "Buggle 전용 스크린샷 보조 도구 — Windows 트레이 앱. 캡처를 로컬에 저장하고 Buggle 웹앱에 localhost API로 제공한다.",
-  "author": "Buggle",
+  "version": "0.1.1",
+  "description": "buggle 전용 스크린샷 보조 도구 — Windows 트레이 앱. 캡처를 로컬에 저장하고 buggle 웹앱에 localhost API로 제공한다.",
+  "author": "buggle",
   "license": "UNLICENSED",
   "private": true,
   "main": "dist/main/main.js",
@@ -30,7 +30,7 @@
   },
   "build": {
     "appId": "com.buggle.capturehelper",
-    "productName": "Buggle Capture Helper",
+    "productName": "buggle 캡처 도우미",
     "directories": {
       "output": "release"
     },
@@ -40,7 +40,7 @@
     ],
     "protocols": [
       {
-        "name": "Buggle Capture",
+        "name": "buggle 캡처",
         "schemes": [
           "buggle-capture"
         ]

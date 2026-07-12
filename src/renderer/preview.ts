@@ -15,6 +15,7 @@ interface Bc {
   conn: () => Promise<{ port: number; token: string }>;
   remove: (id: string) => Promise<boolean>;
   copy: (id: string) => Promise<boolean>;
+  copyFiles: (ids: string[]) => Promise<boolean>;
   capture: (kind: "full" | "region" | "fixed") => Promise<void>;
   record: (kind: "full" | "region") => Promise<void>;
   getHotkeys: () => Promise<HotkeyMap>;
@@ -140,9 +141,14 @@ declare const bc: Bc;
   async function copySelected() {
     const ids = items.map((it) => it.id).filter((id) => selected.has(id));
     if (ids.length === 0) return;
-    const ok = await bc.copy(ids[0]); // OS 클립보드는 이미지 1장 → 선택 중 최신 1장 복사.
-    if (ids.length > 1) flashTip(`${ids.length}장 선택 · 클립보드엔 최신 1장(여러 장은 Buggle 첨부에서)`);
-    else flashTip(ok ? "복사됨" : "복사 실패");
+    if (ids.length > 1) {
+      // 여러 장 → 파일 목록으로 복사(브라우저에 Ctrl+V 시 여러 장 붙여넣기, GIF 애니메이션 유지).
+      const ok = await bc.copyFiles(ids);
+      flashTip(ok ? `${ids.length}장 복사됨 · Ctrl+V로 붙여넣기` : "복사 실패");
+    } else {
+      const ok = await bc.copy(ids[0]); // 1장 → 비트맵(어디에나 이미지로 붙게).
+      flashTip(ok ? "복사됨" : "복사 실패");
+    }
   }
   async function deleteSelected() {
     const ids = items.map((it) => it.id).filter((id) => selected.has(id));

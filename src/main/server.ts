@@ -12,7 +12,7 @@ import { store } from "./store";
  * /health, /pair는 detection/pairing용으로 토큰 없이 접근(대신 origin allowlist).
  */
 
-const NAME = "Buggle Capture Helper";
+const NAME = "buggle 캡처 도우미";
 
 function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return true; // 브라우저 아님(직접 호출) — 토큰으로 별도 보호

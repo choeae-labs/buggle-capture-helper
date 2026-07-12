@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("bc", {
   status: () => ipcRenderer.invoke("preview:status"),
   remove: (id: string) => ipcRenderer.invoke("preview:delete", id),
   copy: (id: string) => ipcRenderer.invoke("preview:copy", id),
+  copyFiles: (ids: string[]) => ipcRenderer.invoke("preview:copyFiles", ids),
   capture: (kind: "full" | "region" | "fixed") => ipcRenderer.invoke("preview:capture", kind),
   record: (kind: "full" | "region") => ipcRenderer.invoke("preview:record", kind),
   getHotkeys: () => ipcRenderer.invoke("preview:getHotkeys"),

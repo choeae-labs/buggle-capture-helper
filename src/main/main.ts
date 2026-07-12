@@ -1,5 +1,7 @@
 import { app, Tray, Menu, BrowserWindow, globalShortcut, ipcMain, nativeImage, clipboard, Notification, screen } from "electron";
 import path from "node:path";
+import fs from "node:fs";
+import { execFile } from "node:child_process";
 import { loadConfig, saveConfig, type Hotkeys } from "./config";
 import { store } from "./store";
 import { startServer, stopServer } from "./server";
@@ -233,7 +235,7 @@ function buildTray() {
   // 간단한 1x1 투명 아이콘 폴백(빌드시 build/icon 교체 권장).
   const icon = nativeImage.createEmpty();
   tray = new Tray(icon);
-  tray.setToolTip("Buggle Capture Helper");
+  tray.setToolTip("buggle 캡처");
   updateTrayMenu();
   tray.on("click", () => togglePreview());
 }
@@ -254,6 +256,23 @@ function registerIpc() {
     if (img.isEmpty()) return false;
     clipboard.writeImage(img);
     return true;
+  });
+  // 여러 장 → 파일 목록(CF_HDROP)으로 클립보드에 복사. 브라우저에 Ctrl+V 시 여러 File로 전달됨(GIF 애니메이션 유지).
+  ipcMain.handle("preview:copyFiles", async (_e, ids: string[]) => {
+    const paths = ids.map((id) => store.filePath(id)).filter((p): p is string => !!p && fs.existsSync(p));
+    if (paths.length === 0) return false;
+    // PowerShell Set-Clipboard -LiteralPath (경로의 홑따옴표는 '' 로 escape).
+    const quoted = paths.map((p) => `'${p.replace(/'/g, "''")}'`).join(",");
+    return await new Promise<boolean>((resolve) => {
+      execFile(
+        "powershell",
+        ["-NoProfile", "-NonInteractive", "-Command", `Set-Clipboard -LiteralPath ${quoted}`],
+        (err) => {
+          if (err) console.warn("[copyFiles] Set-Clipboard 실패:", err.message);
+          resolve(!err);
+        },
+      );
+    });
   });
   ipcMain.handle("preview:capture", (_e, kind: "full" | "region" | "fixed") => runCapture(kind));
   ipcMain.handle("preview:record", (_e, kind: "full" | "region") => runRecord(kind === "region" ? "region" : "full"));

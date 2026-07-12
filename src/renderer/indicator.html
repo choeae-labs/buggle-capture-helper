@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body { margin: 0; height: 100%; font: 12px/1 system-ui, "Malgun Gothic", sans-serif; background: transparent; }
+      #bar {
+        display: flex; align-items: center; gap: 8px; height: 100%;
+        padding: 0 10px; box-sizing: border-box;
+        background: rgba(20, 22, 30, 0.94); color: #fff;
+        border-radius: 23px; border: 1px solid rgba(255,255,255,0.12);
+        box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+      }
+      .dot { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; animation: blink 1s steps(2, start) infinite; }
+      @keyframes blink { 50% { opacity: 0.25; } }
+      .label { font-weight: 600; }
+      .time { color: #cbd5e1; font-variant-numeric: tabular-nums; }
+      .spacer { flex: 1; }
+      #stop {
+        background: #ef4444; color: #fff; border: none; border-radius: 14px;
+        padding: 5px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
+      }
+      #stop:hover { background: #dc2626; }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <span class="dot"></span>
+      <span class="label">녹화 중</span>
+      <span class="time" id="time">00:00</span>
+      <span class="spacer"></span>
+      <button id="stop">정지</button>
+    </div>
+    <script src="./indicator.js"></script>
+  </body>
+</html>

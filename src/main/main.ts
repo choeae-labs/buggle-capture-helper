@@ -2,6 +2,7 @@ import { app, Tray, Menu, BrowserWindow, globalShortcut, ipcMain, nativeImage, c
 import path from "node:path";
 import fs from "node:fs";
 import { execFile } from "node:child_process";
+import electronUpdater from "electron-updater";
 import { loadConfig, saveConfig, type Hotkeys } from "./config";
 import { store } from "./store";
 import { startServer, stopServer } from "./server";
@@ -277,6 +278,7 @@ function registerIpc() {
   ipcMain.handle("preview:capture", (_e, kind: "full" | "region" | "fixed") => runCapture(kind));
   ipcMain.handle("preview:record", (_e, kind: "full" | "region") => runRecord(kind === "region" ? "region" : "full"));
   ipcMain.handle("preview:getHotkeys", () => loadConfig().hotkeys);
+  ipcMain.handle("preview:getRecording", () => loadConfig().recording);
   ipcMain.handle("preview:setHotkeys", (_e, hk: Partial<Hotkeys>) => {
     const cfg = saveConfig({ hotkeys: { ...loadConfig().hotkeys, ...hk } });
     registerHotkeys(); // 새 단축키 즉시 반영
@@ -329,6 +331,23 @@ function protocolUrlFromArgv(argv: string[]): string | null {
   return argv.find((a) => a.startsWith(`${PROTOCOL}://`)) ?? null;
 }
 
+/** 자동 업데이트 — 설치 빌드에서만. 새 버전을 조용히 받아 다음 종료/재시작 시 적용. */
+function checkForUpdates() {
+  if (!app.isPackaged) return; // dev 제외
+  try {
+    const { autoUpdater } = electronUpdater;
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on("update-downloaded", (info) => {
+      notify("업데이트 준비됨", `새 버전 ${info.version} — 앱을 다시 시작하면 적용돼요.`);
+    });
+    autoUpdater.on("error", (e) => console.warn("[updater] 오류:", e?.message ?? e));
+    void autoUpdater.checkForUpdates();
+  } catch (e) {
+    console.warn("[updater] 초기화 실패:", e);
+  }
+}
+
 /** 로그인 시 자동 시작 반영. dev(비패키지)에서는 건너뜀. */
 function applyAutoStart() {
   if (!app.isPackaged) return; // dev(npm start)에서는 등록 안 함
@@ -361,6 +380,7 @@ if (!gotLock) {
     if (process.platform === "win32") app.setAppUserModelId("com.buggle.capturehelper");
     loadConfig();
     applyAutoStart();
+    checkForUpdates();
     startServer();
     initRecorder({ setRecordingUi });
     registerRecorderIpc();

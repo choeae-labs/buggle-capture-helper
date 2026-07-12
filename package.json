@@ -1,6 +1,6 @@
 {
   "name": "buggle-capture-helper",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "buggle 전용 스크린샷 보조 도구 — Windows 트레이 앱. 캡처를 로컬에 저장하고 buggle 웹앱에 localhost API로 제공한다.",
   "author": "buggle",
   "license": "UNLICENSED",
@@ -17,6 +17,7 @@
     "dist": "npm run build && electron-builder --win"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "gifenc": "^1.0.3",
     "ws": "^8.18.0"
   },
@@ -34,6 +35,13 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "choeae-labs",
+        "repo": "buggle-capture-helper"
+      }
+    ],
     "files": [
       "dist/**/*",
       "package.json"

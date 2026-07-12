@@ -2,7 +2,7 @@ import { BrowserWindow, ipcMain, Notification, screen } from "electron";
 import path from "node:path";
 import { loadConfig } from "./config";
 import { store } from "./store";
-import { displayUnderCursor, getDisplaySourceId, pickRegion, type Rect } from "./capture";
+import { displayUnderCursor, getDisplaySourceId, pickRegionMulti, type Rect } from "./capture";
 
 /**
  * 화면 녹화 컨트롤러(main). 숨은 recorder 창이 desktop 스트림을 canvas로 그려
@@ -23,6 +23,7 @@ export function initRecorder(h: RecorderHooks) {
 
 let encoder: BrowserWindow | null = null;
 let indicator: BrowserWindow | null = null;
+let regionFrame: BrowserWindow | null = null;
 let recording = false;
 let autoStopTimer: ReturnType<typeof setTimeout> | null = null;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -71,6 +72,41 @@ function createIndicator() {
   indicator.on("closed", () => (indicator = null));
 }
 
+/** 녹화 중인 영역을 테두리로 표시(content-protected → GIF엔 안 찍힘, 클릭 통과). */
+function createRegionFrame(display: Electron.Display, region: Rect) {
+  const sx = Math.round(display.bounds.x + region.x);
+  const sy = Math.round(display.bounds.y + region.y);
+  const w = Math.max(1, Math.round(region.width));
+  const h = Math.max(1, Math.round(region.height));
+  regionFrame = new BrowserWindow({
+    x: sx,
+    y: sy,
+    width: w,
+    height: h,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    focusable: false,
+    hasShadow: false,
+    enableLargerThanScreen: true,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: { contextIsolation: true },
+  });
+  regionFrame.setContentProtection(true); // 캡처에서 제외 → 녹화 결과엔 테두리가 안 들어감
+  regionFrame.setIgnoreMouseEvents(true); // 클릭 통과(아래 화면 조작 가능)
+  regionFrame.setAlwaysOnTop(true, "screen-saver");
+  const html =
+    "<style>html,body{margin:0;height:100%;background:transparent;overflow:hidden}" +
+    ".b{position:fixed;inset:0;box-sizing:border-box;border:2px solid #ef4444;" +
+    "box-shadow:0 0 0 1px rgba(0,0,0,.55) inset,0 0 0 1px rgba(0,0,0,.55)}</style><div class='b'></div>";
+  regionFrame.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+  regionFrame.once("ready-to-show", () => regionFrame?.showInactive());
+  regionFrame.on("closed", () => (regionFrame = null));
+}
+
 function createEncoder() {
   encoder = new BrowserWindow({
     // 화면 밖에 '표시'해 compositor가 계속 프레임을 그리게 한다(show:false면 비디오가 멈춤).
@@ -96,18 +132,20 @@ function createEncoder() {
 export async function startRecording(kind: RecordKind): Promise<boolean> {
   if (recording) return false;
   const cfg = loadConfig();
-  const display = displayUnderCursor();
+  let display = displayUnderCursor();
 
   // 녹화 UI(preview 숨김) 먼저 — 영역 오버레이/프레임에 안 잡히게.
   hooks.setRecordingUi(true);
 
   let crop: Rect | null = null;
   if (kind === "region") {
-    crop = await pickRegion(display);
-    if (!crop) {
+    const picked = await pickRegionMulti();
+    if (!picked) {
       hooks.setRecordingUi(false);
       return false; // 취소
     }
+    display = picked.display; // 고른 모니터로 녹화 대상 전환
+    crop = picked.region;
   }
 
   let sourceId: string;
@@ -125,6 +163,7 @@ export async function startRecording(kind: RecordKind): Promise<boolean> {
 
   createEncoder();
   createIndicator();
+  if (kind === "region" && crop) createRegionFrame(display, crop); // 녹화 영역 테두리 표시
 
   const beginPayload = {
     sourceId,
@@ -177,6 +216,8 @@ function cleanup() {
   }
   if (indicator && !indicator.isDestroyed()) indicator.close();
   indicator = null;
+  if (regionFrame && !regionFrame.isDestroyed()) regionFrame.close();
+  regionFrame = null;
   if (encoder && !encoder.isDestroyed()) encoder.close();
   encoder = null;
   hooks.setRecordingUi(false);

@@ -74,14 +74,13 @@ function cropRegion(img: NativeImage, region: Rect, scale: number): NativeImage 
   return img.crop(rect);
 }
 
-/** 선택 영역 캡처 — 오버레이로 드래그 → 그 디스플레이 캡처 후 crop. */
+/** 선택 영역 캡처 — 모든 모니터 오버레이로 드래그 → 고른 모니터 캡처 후 crop. */
 export async function captureRegion(): Promise<CaptureItem | null> {
-  const display = displayUnderCursor();
-  const region = await pickRegion(display);
-  if (!region) return null;
-  const { img, scale } = await captureDisplayImage(display);
-  const cropped = cropRegion(img, region, scale);
-  return saveImage(cropped, String(display.id));
+  const picked = await pickRegionMulti();
+  if (!picked) return null;
+  const { img, scale } = await captureDisplayImage(picked.display);
+  const cropped = cropRegion(img, picked.region, scale);
+  return saveImage(cropped, String(picked.display.id));
 }
 
 /** 고정 영역 캡처 — 저장된 좌표로 즉시 crop. 없으면 먼저 지정 유도(null 반환). */
@@ -95,66 +94,83 @@ export async function captureFixed(): Promise<CaptureItem | null> {
   return saveImage(cropped, String(display.id));
 }
 
-/** 고정 영역 재지정 — 오버레이로 드래그해 좌표 저장. */
+/** 고정 영역 재지정 — 모든 모니터 오버레이로 드래그해 좌표 저장. */
 export async function setFixedRegion(): Promise<FixedRegion | null> {
-  const display = displayUnderCursor();
-  const region = await pickRegion(display);
-  if (!region) return null;
-  const fr: FixedRegion = { displayId: String(display.id), ...region };
+  const picked = await pickRegionMulti();
+  if (!picked) return null;
+  const fr: FixedRegion = { displayId: String(picked.display.id), ...picked.region };
   saveConfig({ fixedRegion: fr });
   return fr;
 }
 
-/* ===== 오버레이(선택 영역 드래그) ===== */
+/* ===== 오버레이(선택 영역 드래그) — 모든 모니터에 표시 ===== */
 
-let overlayWin: BrowserWindow | null = null;
+let overlayWins: BrowserWindow[] = [];
 
-export function pickRegion(display: Electron.Display): Promise<Rect | null> {
+function createOverlay(display: Electron.Display): BrowserWindow {
+  const b = display.bounds; // 스크린 좌표(DIP)
+  const win = new BrowserWindow({
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    fullscreenable: false,
+    hasShadow: false,
+    enableLargerThanScreen: true,
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/overlay-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  win.setAlwaysOnTop(true, "screen-saver");
+  win.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
+  win.loadFile(path.join(__dirname, "../renderer/overlay.html"));
+  return win;
+}
+
+/**
+ * 모든 모니터에 오버레이를 띄우고, 드래그로 영역을 고른다.
+ * 어느 모니터에서 골랐는지 판별해 그 디스플레이와 디스플레이-로컬 영역(DIP)을 반환.
+ */
+export function pickRegionMulti(): Promise<{ display: Electron.Display; region: Rect } | null> {
   return new Promise((resolve) => {
-    if (overlayWin) {
-      overlayWin.close();
-      overlayWin = null;
-    }
-    const b = display.bounds; // 스크린 좌표(DIP)
-    const win = new BrowserWindow({
-      x: b.x,
-      y: b.y,
-      width: b.width,
-      height: b.height,
-      frame: false,
-      transparent: true,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      movable: false,
-      fullscreenable: false,
-      hasShadow: false,
-      enableLargerThanScreen: true,
-      webPreferences: {
-        preload: path.join(__dirname, "../preload/overlay-preload.js"),
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    });
-    overlayWin = win;
-    win.setAlwaysOnTop(true, "screen-saver");
-    win.loadFile(path.join(__dirname, "../renderer/overlay.html"));
-    win.once("ready-to-show", () => win.show());
+    for (const w of overlayWins) if (!w.isDestroyed()) w.close();
+    overlayWins = [];
+
+    const cursorDisplay = displayUnderCursor();
+    const entries = screen.getAllDisplays().map((display) => ({ win: createOverlay(display), display }));
+    overlayWins = entries.map((e) => e.win);
 
     let done = false;
-    const finish = (rect: Rect | null) => {
+    const finish = (result: { display: Electron.Display; region: Rect } | null) => {
       if (done) return;
       done = true;
       ipcMain.removeListener("overlay:select", onSelect);
       ipcMain.removeListener("overlay:cancel", onCancel);
-      if (!win.isDestroyed()) win.close();
-      overlayWin = null;
-      resolve(rect && rect.width >= 3 && rect.height >= 3 ? rect : null);
+      for (const { win } of entries) if (!win.isDestroyed()) win.close();
+      overlayWins = [];
+      resolve(result);
     };
-    const onSelect = (_e: unknown, rect: Rect) => finish(rect);
+    const onSelect = (e: Electron.IpcMainEvent, rect: Rect) => {
+      const hit = entries.find((x) => !x.win.isDestroyed() && x.win.webContents.id === e.sender.id);
+      if (!hit) return;
+      finish(rect.width >= 3 && rect.height >= 3 ? { display: hit.display, region: rect } : null);
+    };
     const onCancel = () => finish(null);
     ipcMain.on("overlay:select", onSelect);
     ipcMain.on("overlay:cancel", onCancel);
-    win.on("closed", () => finish(null));
+
+    for (const { win, display } of entries) {
+      // 커서가 있는 모니터의 오버레이에 포커스(Esc 키 수신용). 나머지는 비활성 표시.
+      const focusThis = display.id === cursorDisplay.id;
+      win.once("ready-to-show", () => (focusThis ? win.show() : win.showInactive()));
+    }
   });
 }

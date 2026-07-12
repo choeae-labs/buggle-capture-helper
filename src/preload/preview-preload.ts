@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("bc", {
   record: (kind: "full" | "region") => ipcRenderer.invoke("preview:record", kind),
   getHotkeys: () => ipcRenderer.invoke("preview:getHotkeys"),
   setHotkeys: (hk: Record<string, string>) => ipcRenderer.invoke("preview:setHotkeys", hk),
+  getRecording: () => ipcRenderer.invoke("preview:getRecording"),
   hide: () => ipcRenderer.send("preview:hide"),
   collapse: (v: boolean) => ipcRenderer.send("preview:collapse", v),
   setTrayIcon: (d: { p16: string; p32: string }) => ipcRenderer.send("tray:icon", d),

@@ -20,6 +20,7 @@ interface Bc {
   record: (kind: "full" | "region") => Promise<void>;
   getHotkeys: () => Promise<HotkeyMap>;
   setHotkeys: (hk: Partial<HotkeyMap>) => Promise<HotkeyMap>;
+  getRecording: () => Promise<{ fps: number; maxSeconds: number; maxWidth: number }>;
   hide: () => void;
   collapse: (v: boolean) => void;
   setTrayIcon: (d: { p16: string; p32: string }) => void;
@@ -344,6 +345,7 @@ declare const bc: Bc;
       next[key] = readRow(el);
     }
     await bc.setHotkeys(next);
+    refreshTooltips(); // 바뀐 단축키를 툴팁에 반영
     closeSettings();
     flashTip("단축키 저장됨");
   });
@@ -376,6 +378,29 @@ declare const bc: Bc;
     };
     img.src = "data:image/svg+xml;base64," + btoa(SVG);
   })();
+
+  // 캡처/녹화 버튼 툴팁에 단축키 + 녹화 최대시간 반영(설정 변경 시 갱신).
+  function fmtAccel(a: string): string {
+    return a.replace("CommandOrControl", "Ctrl").replace("Command", "Cmd").replace(/\+/g, " + ");
+  }
+  function applyTooltips(hk: HotkeyMap, maxSeconds: number) {
+    const set = (sel: string, base: string, accel: string) => {
+      const el = document.querySelector(sel);
+      if (el) el.setAttribute("title", accel ? `${base} (${fmtAccel(accel)})` : `${base} (단축키 없음)`);
+    };
+    set('[data-cap="full"]', "전체 화면 캡처", hk.fullScreen);
+    set('[data-cap="region"]', "선택 영역 캡처 · 드래그", hk.region);
+    set('[data-cap="fixed"]', "고정 영역 캡처", hk.fixed);
+    const rec = document.getElementById("recBtn");
+    if (rec) {
+      const base = `화면 녹화 · GIF, 최대 ${maxSeconds}초`;
+      rec.setAttribute("title", hk.record ? `${base} (${fmtAccel(hk.record)})` : base);
+    }
+  }
+  function refreshTooltips() {
+    Promise.all([bc.getHotkeys(), bc.getRecording()]).then(([hk, rec]) => applyTooltips(hk, rec.maxSeconds));
+  }
+  refreshTooltips();
 
   bc.onCaptures(render);
   bc.conn().then((c) => {

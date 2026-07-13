@@ -1,6 +1,6 @@
 {
   "name": "buggle-capture-helper",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "buggle 캡처 도우미",
   "author": "buggle",
   "license": "UNLICENSED",
@@ -25,14 +25,14 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
-    "electron": "^33.2.0",
+    "electron": "^43.1.0",
     "electron-builder": "^25.1.8",
     "rimraf": "^6.0.1",
     "typescript": "^5.7.2"
   },
   "build": {
     "appId": "com.buggle.capturehelper",
-    "productName": "buggle 캡처 도우미",
+    "productName": "Buggle Capture",
     "directories": {
       "output": "release"
     },
@@ -71,7 +71,6 @@
       ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.png",
-      "identity": null,
       "artifactName": "BuggleCaptureHelper.${ext}"
     },
     "nsis": {

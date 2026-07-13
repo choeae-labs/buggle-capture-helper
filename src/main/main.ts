@@ -262,18 +262,29 @@ function registerIpc() {
   ipcMain.handle("preview:copyFiles", async (_e, ids: string[]) => {
     const paths = ids.map((id) => store.filePath(id)).filter((p): p is string => !!p && fs.existsSync(p));
     if (paths.length === 0) return false;
-    // PowerShell Set-Clipboard -LiteralPath (경로의 홑따옴표는 '' 로 escape).
-    const quoted = paths.map((p) => `'${p.replace(/'/g, "''")}'`).join(",");
-    return await new Promise<boolean>((resolve) => {
-      execFile(
-        "powershell",
-        ["-NoProfile", "-NonInteractive", "-Command", `Set-Clipboard -LiteralPath ${quoted}`],
-        (err) => {
-          if (err) console.warn("[copyFiles] Set-Clipboard 실패:", err.message);
-          resolve(!err);
-        },
-      );
-    });
+    if (process.platform === "win32") {
+      // Windows: CF_HDROP(파일 목록)로 클립보드에 담아 브라우저 Ctrl+V 시 여러 File로 붙는다.
+      // PowerShell Set-Clipboard -LiteralPath (경로의 홑따옴표는 '' 로 escape).
+      const quoted = paths.map((p) => `'${p.replace(/'/g, "''")}'`).join(",");
+      return await new Promise<boolean>((resolve) => {
+        execFile(
+          "powershell",
+          ["-NoProfile", "-NonInteractive", "-Command", `Set-Clipboard -LiteralPath ${quoted}`],
+          (err) => {
+            if (err) console.warn("[copyFiles] Set-Clipboard 실패:", err.message);
+            resolve(!err);
+          },
+        );
+      });
+    }
+    // macOS 등: NSPasteboard는 여러 파일을 브라우저 붙여넣기(DataTransfer.files)로 넘겨주지 못한다.
+    // 첫 이미지만 비트맵으로 클립보드에 담는 폴백(단일 붙여넣기). 여러 장은 웹 캡처 피커로 유도한다.
+    const first = nativeImage.createFromPath(paths[0]);
+    if (!first.isEmpty()) {
+      clipboard.writeImage(first);
+      return true;
+    }
+    return false;
   });
   ipcMain.handle("preview:capture", (_e, kind: "full" | "region" | "fixed") => runCapture(kind));
   ipcMain.handle("preview:record", (_e, kind: "full" | "region") => runRecord(kind === "region" ? "region" : "full"));
@@ -334,6 +345,9 @@ function protocolUrlFromArgv(argv: string[]): string | null {
 /** 자동 업데이트 — 설치 빌드에서만. 새 버전을 조용히 받아 다음 종료/재시작 시 적용. */
 function checkForUpdates() {
   if (!app.isPackaged) return; // dev 제외
+  // macOS는 Developer ID 코드서명 없이는 electron-updater(Squirrel.Mac)가 서명 검증에서 실패한다.
+  // 서명 붙이기 전까지 mac은 자동업데이트를 끄고 Homebrew(brew upgrade)로 갱신한다.
+  if (process.platform === "darwin") return;
   try {
     const { autoUpdater } = electronUpdater;
     autoUpdater.autoDownload = true;

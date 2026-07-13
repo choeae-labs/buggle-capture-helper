@@ -1,6 +1,6 @@
 {
   "name": "buggle-capture-helper",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "buggle 전용 스크린샷 보조 도구 — Windows 트레이 앱. 캡처를 로컬에 저장하고 buggle 웹앱에 localhost API로 제공한다.",
   "author": "buggle",
   "license": "UNLICENSED",
@@ -65,7 +65,7 @@
       "target": [
         {
           "target": "dmg",
-          "arch": "universal"
+          "arch": "arm64"
         }
       ],
       "category": "public.app-category.productivity",

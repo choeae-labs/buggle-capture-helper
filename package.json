@@ -14,7 +14,8 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "make-icon": "electron scripts/make-icon.js",
-    "dist": "npm run build && electron-builder --win"
+    "dist": "npm run build && electron-builder --win",
+    "dist:mac": "npm run make-icon && npm run build && electron-builder --mac"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
@@ -59,6 +60,18 @@
         "nsis"
       ],
       "artifactName": "BuggleCaptureSetup.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "universal"
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "identity": null,
+      "artifactName": "BuggleCaptureHelper-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,

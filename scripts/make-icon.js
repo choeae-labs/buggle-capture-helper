@@ -64,6 +64,14 @@ app.whenReady().then(async () => {
     fs.mkdirSync(path.join(__dirname, "..", "build"), { recursive: true });
     fs.writeFileSync(path.join(__dirname, "..", "build", "icon.ico"), ico);
     console.log(`build/icon.ico 생성 완료 (${ico.length} bytes, ${SIZES.length} sizes)`);
+
+    // macOS/Linux용 큰 PNG(1024) — electron-builder가 mac 빌드 시 이 png를 icns로 자동 변환한다.
+    const bigDurl = await win.webContents.executeJavaScript(
+      `window.__render(1024, ${JSON.stringify(dataUri)})`
+    );
+    const bigBuf = Buffer.from(bigDurl.split(",")[1], "base64");
+    fs.writeFileSync(path.join(__dirname, "..", "build", "icon.png"), bigBuf);
+    console.log(`build/icon.png 생성 완료 (${bigBuf.length} bytes, 1024)`);
     app.exit(0);
   } catch (e) {
     console.error("icon 생성 실패:", e);

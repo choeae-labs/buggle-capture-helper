@@ -43,6 +43,7 @@
         "repo": "buggle-capture-helper"
       }
     ],
+    "afterPack": "scripts/after-pack.js",
     "files": [
       "dist/**/*",
       "package.json"

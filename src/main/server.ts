@@ -25,6 +25,9 @@ function setCors(res: http.ServerResponse, origin: string | undefined) {
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    // Private Network Access: https(공개 origin) 페이지가 127.0.0.1(로컬)로 붙을 때
+    // Chrome이 preflight로 요구하는 헤더. 없으면 운영(https://www.buggle.co.kr)에서 연결이 막힌다.
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
     res.setHeader("Access-Control-Max-Age", "600");
   }
 }

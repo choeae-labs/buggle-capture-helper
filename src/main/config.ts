@@ -60,8 +60,8 @@ const DEFAULTS: AppConfig = {
   allowedOrigins: [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://buggle.im",
-    "https://www.buggle.im",
+    "https://buggle.co.kr",
+    "https://www.buggle.co.kr",
   ],
   hotkeys: {
     fullScreen: "CommandOrControl+Shift+1",

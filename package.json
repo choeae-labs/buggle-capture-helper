@@ -71,7 +71,7 @@
       "category": "public.app-category.productivity",
       "icon": "build/icon.png",
       "identity": null,
-      "artifactName": "BuggleCaptureHelper-${version}-${arch}.${ext}"
+      "artifactName": "BuggleCaptureHelper.${ext}"
     },
     "nsis": {
       "oneClick": false,

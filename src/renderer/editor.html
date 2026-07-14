@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>buggle 캡처 편집</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0f131b; color: #e6e9ef; font: 13px/1.4 system-ui, "Malgun Gothic", sans-serif; overflow: hidden; }
+      #bar {
+        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+        padding: 8px 10px; background: #171b24; border-bottom: 1px solid rgba(255,255,255,0.08);
+      }
+      #bar .div { width: 1px; height: 22px; background: rgba(255,255,255,0.14); margin: 0 4px; }
+      #bar .grow { flex: 1; }
+      .tb {
+        min-width: 34px; height: 30px; padding: 0 8px; border-radius: 6px; cursor: pointer; font-size: 13px;
+        background: rgba(255,255,255,0.07); color: #e6e9ef; border: 1px solid transparent;
+      }
+      .tb:hover { background: rgba(255,255,255,0.14); }
+      .tb.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+      .tb:disabled { opacity: 0.4; cursor: default; }
+      .colors { display: flex; gap: 5px; }
+      .sw { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(255,255,255,0.25); }
+      .sw.active { border-color: #fff; }
+      .ctx { display: inline-flex; align-items: center; gap: 4px; color: #c3c9d4; font-size: 12px; }
+      .ctx input[type="number"] { width: 52px; height: 26px; background: #0f131b; color: #e6e9ef; border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; padding: 0 6px; }
+      .ctx label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+      .btn { height: 30px; padding: 0 12px; border-radius: 6px; cursor: pointer; font-size: 13px; background: rgba(255,255,255,0.08); color: #e6e9ef; border: 1px solid rgba(255,255,255,0.18); }
+      .btn:hover { background: rgba(255,255,255,0.16); }
+      .btn.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+      .btn.done { background: #10b981; border-color: #10b981; color: #fff; }
+      .btn:disabled { opacity: 0.5; cursor: default; }
+      #stage { position: absolute; top: 47px; left: 0; right: 0; bottom: 30px; overflow: auto; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+      .canvas-container { box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+      #hint { position: absolute; left: 0; right: 0; bottom: 0; height: 30px; line-height: 30px; padding: 0 12px; font-size: 11px; color: #8b93a1; background: #171b24; border-top: 1px solid rgba(255,255,255,0.06); }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <div class="tools" style="display:flex;gap:5px">
+        <button class="tb" data-tool="select" title="선택 / 이동">선택</button>
+        <button class="tb" data-tool="rect" title="사각형">▭</button>
+        <button class="tb" data-tool="arrow" title="화살표">↗</button>
+        <button class="tb" data-tool="text" title="텍스트">T</button>
+        <button class="tb" data-tool="crop" title="자르기">⛶</button>
+        <button class="tb" data-tool="stamp" title="번호 스탬프">①</button>
+        <button class="tb" data-tool="redact" title="가림 (모자이크/블러)">▦</button>
+      </div>
+      <span class="div"></span>
+      <div class="colors" id="colors"></div>
+      <span class="div"></span>
+      <span class="ctx" id="ctxStampNext" style="display:none">다음 <input id="nextNum" type="number" min="1" /></span>
+      <span class="ctx" id="ctxStampCur" style="display:none">번호 <input id="curNum" type="number" min="1" /></span>
+      <span class="ctx" id="ctxText" style="display:none">글자 <input id="textSize" type="number" min="6" /></span>
+      <span class="ctx" id="ctxRedact" style="display:none">
+        <label><input type="radio" name="rm" value="mosaic" checked /> 모자이크</label>
+        <label><input type="radio" name="rm" value="blur" /> 블러</label>
+      </span>
+      <span class="div"></span>
+      <button class="tb" id="undo" title="되돌리기 (Ctrl+Z)">↶</button>
+      <button class="tb" id="redo" title="다시실행 (Ctrl+Shift+Z)">↷</button>
+      <span class="grow"></span>
+      <button class="btn primary" id="cropApply" style="display:none">자르기 적용</button>
+      <button class="btn" id="cancel">취소</button>
+      <button class="btn done" id="done">완료</button>
+    </div>
+    <div id="stage"><canvas id="c"></canvas></div>
+    <div id="hint"></div>
+    <script src="./editor.js"></script>
+  </body>
+</html>

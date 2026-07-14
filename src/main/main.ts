@@ -390,6 +390,11 @@ if (!gotLock) {
     else togglePreview();
   });
 
+  // macOS: 독 아이콘 클릭 또는 앱 아이콘으로 직접 실행 시 미리보기 창을 띄운다.
+  // (트레이 상주 앱이라 창이 없어 "눌러도 반응 없다"는 혼선 방지. 로그인 자동 시작으로
+  //  백그라운드에서 열릴 땐 activate가 발생하지 않아 조용히 트레이만 상주한다.)
+  app.on("activate", () => showPreview());
+
   app.whenReady().then(() => {
     if (process.platform === "win32") app.setAppUserModelId("com.buggle.capturehelper");
     loadConfig();

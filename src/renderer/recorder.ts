@@ -24,6 +24,9 @@
   let frameCount = 0;
   let running = false;
   let loopTimer: any = null;
+  let capW = 0,
+    capH = 0,
+    fpsActual = 0; // 실측: 실제 캡처 해상도·fps(스로틀 적용됐는지 검증용)
 
   function stopStream() {
     try {
@@ -63,6 +66,16 @@
     };
     stream = await navigator.mediaDevices.getUserMedia(constraints);
 
+    // ★ 마우스 끊김 최대 레버: mandatory로는 desktop 소스에서 자주 무시되는 프레임레이트/해상도를
+    //   트랙 자체에 applyConstraints로 실효 적용. ProMotion 60~120fps 풀레이트 캡처를 opts.fps로 낮춰
+    //   WindowServer/GPU 부하(=커서 소프트웨어 합성 stutter의 원인)를 직접 차단한다.
+    const track = stream.getVideoTracks()[0];
+    try {
+      await track.applyConstraints({ frameRate: { max: opts.fps }, width: { max: captureW }, height: { max: captureH } });
+    } catch {
+      /* 일부 소스 미지원 → mandatory 값으로 진행 */
+    }
+
     video = document.createElement("video");
     video.srcObject = stream;
     video.muted = true;
@@ -70,6 +83,11 @@
     if (!video.videoWidth) {
       await new Promise<void>((r) => video!.addEventListener("loadedmetadata", () => r(), { once: true }));
     }
+
+    // 실측: 캡처가 실제로 줄었는지(finalize에서 notify로 노출). capW가 target 근처+fpsActual≈opts.fps면 스로틀 성공.
+    capW = video.videoWidth;
+    capH = video.videoHeight;
+    fpsActual = Math.round((track.getSettings().frameRate ?? 0) * 10) / 10;
 
     // DIP → 비디오 픽셀 배율(영역 크롭 정확도).
     const scale = video.videoWidth / opts.displayWidthDip || 1;
@@ -99,39 +117,50 @@
     let palette: any = null;
 
     const delayMs = Math.max(20, Math.round(1000 / opts.fps));
+    const frameInterval = 1000 / opts.fps;
     const maxFrames = opts.fps * 60; // 안전 상한(정상 정지는 main의 finalize)
-    let nextAt = performance.now();
-    let lastAt = nextAt;
-    let first = true;
+    let lastAt = -Infinity; // 마지막 '처리한' 프레임 시각 — fps 게이트 겸 delay 기준
 
-    const tick = () => {
-      if (!running || !ctx || !canvas || !video) return;
-      const now = performance.now();
+    // 한 프레임 처리(캡처→인덱싱→인코딩). GIF delay는 실제 경과시간(재생 길이 정확).
+    const processFrame = (nowTs: number) => {
+      if (!ctx || !canvas || !video) return;
       ctx.drawImage(video, sx, sy, sw, sh, 0, 0, targetW, targetH);
       const { data } = ctx.getImageData(0, 0, targetW, targetH);
-
       if (!palette || frameCount % REFRESH_EVERY === 0) palette = quantize(data, COLORS, { format: FORMAT });
       const index = applyPalette(data, palette, FORMAT);
-
-      // GIF 타임라인을 실제 경과시간으로(고정 delay 금지 → 밀림 누적/재생길이 왜곡 방지).
-      const frameDelay = first ? delayMs : Math.max(20, Math.round(now - lastAt));
-      lastAt = now;
-      first = false;
-
+      const frameDelay = lastAt === -Infinity ? delayMs : Math.max(20, Math.round(nowTs - lastAt));
+      lastAt = nowTs;
       gif.writeFrame(index, targetW, targetH, { palette, delay: frameDelay });
       frameCount++;
       if (frameCount === 1) grabThumb(targetW, targetH);
-      if (frameCount >= maxFrames) {
-        void finalize();
-        return;
-      }
-
-      // 드리프트 보정 + 밀리면 프레임 드랍(연속발사 스파이럴 방지).
-      nextAt += delayMs;
-      if (now > nextAt + delayMs) nextAt = now + delayMs;
-      loopTimer = setTimeout(tick, Math.max(0, nextAt - performance.now()));
     };
-    loopTimer = setTimeout(tick, delayMs);
+
+    // ★ setTimeout tick → requestVideoFrameCallback: 실제 프레임 도착에만 반응 + fps 게이트로 opts.fps만 처리.
+    //   합성기와 동기돼 중복 tick/readback이 사라지고 jank가 준다(rVFC 미지원 시 setTimeout 폴백).
+    const anyVideo = video as any;
+    if (typeof anyVideo.requestVideoFrameCallback === "function") {
+      const onFrame = (nowTs: number) => {
+        if (!running || !video) return;
+        if (nowTs - lastAt >= frameInterval - 2) processFrame(nowTs);
+        if (frameCount >= maxFrames) {
+          void finalize();
+          return;
+        }
+        (video as any).requestVideoFrameCallback(onFrame);
+      };
+      anyVideo.requestVideoFrameCallback(onFrame);
+    } else {
+      const loop = () => {
+        if (!running) return;
+        processFrame(performance.now());
+        if (frameCount >= maxFrames) {
+          void finalize();
+          return;
+        }
+        loopTimer = setTimeout(loop, delayMs);
+      };
+      loopTimer = setTimeout(loop, delayMs);
+    }
   }
 
   function grabThumb(w: number, h: number) {
@@ -161,7 +190,7 @@
       const width = canvas.width;
       const height = canvas.height;
       stopStream();
-      ipcRenderer.send("recorder:done", { gif: bytes, thumb, width, height, frames: frameCount });
+      ipcRenderer.send("recorder:done", { gif: bytes, thumb, width, height, frames: frameCount, capW, capH, fpsActual });
     } catch (e: any) {
       stopStream();
       ipcRenderer.send("recorder:error", String(e?.message ?? e));

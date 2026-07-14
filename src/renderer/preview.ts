@@ -16,10 +16,13 @@ interface Bc {
   remove: (id: string) => Promise<boolean>;
   copy: (id: string) => Promise<boolean>;
   copyFiles: (ids: string[]) => Promise<boolean>;
+  edit: (id: string) => Promise<void>;
   capture: (kind: "full" | "region" | "fixed") => Promise<void>;
   record: (kind: "full" | "region") => Promise<void>;
   getHotkeys: () => Promise<HotkeyMap>;
   setHotkeys: (hk: Partial<HotkeyMap>) => Promise<HotkeyMap>;
+  suspendHotkeys: () => Promise<void>;
+  resumeHotkeys: () => Promise<void>;
   getRecording: () => Promise<{ fps: number; maxSeconds: number; maxWidth: number }>;
   hide: () => void;
   collapse: (v: boolean) => void;
@@ -114,6 +117,7 @@ declare const bc: Bc;
           ${it.usedAt ? `<span class="used">첨부됨</span>` : ""}
         </div>
         <div class="acts">
+          ${it.kind !== "gif" ? `<button data-edit="${it.id}">편집</button>` : ""}
           <button data-copy="${it.id}">복사</button>
           <button data-del="${it.id}">삭제</button>
         </div>`;
@@ -165,8 +169,13 @@ declare const bc: Bc;
 
   listEl.addEventListener("click", async (e) => {
     const t = e.target as HTMLElement;
+    const editId = t.getAttribute("data-edit");
     const copyId = t.getAttribute("data-copy");
     const delId = t.getAttribute("data-del");
+    if (editId) {
+      void bc.edit(editId);
+      return;
+    }
     if (copyId) {
       const ok = await bc.copy(copyId);
       t.textContent = ok ? "복사됨" : "실패";
@@ -331,53 +340,98 @@ declare const bc: Bc;
   const hkRowEls = Array.from(groupEl.querySelectorAll<HTMLDivElement>(".hkrow"));
 
   // ---- 레코딩 상태 ----
+  // 입력칸 클릭 → 녹화 시작. 키를 누를 때마다 실시간 표시(확정 X).
+  // Enter(또는 다른 영역 클릭) → 후보 확정. Esc → 취소(원래 값 복원). 단독 키도 허용.
   let recHkBtn: HTMLButtonElement | null = null; // 현재 녹화 중인 버튼
+  let candidate = ""; // 현재 후보 accelerator(실시간)
+
   function setRowAccel(btn: HTMLButtonElement, accel: string) {
     btn.setAttribute("data-accel", accel);
     btn.textContent = fmtCombo(accel);
     btn.classList.toggle("empty", !accel);
   }
-  function stopHkRecording() {
+  /** 후보를 확정(적용)하고 녹화 종료. */
+  function commitHkRecording() {
     if (!recHkBtn) return;
-    setRowAccel(recHkBtn, recHkBtn.getAttribute("data-accel") ?? ""); // 라벨 복원
-    recHkBtn.classList.remove("rec");
+    const btn = recHkBtn;
     recHkBtn = null;
+    btn.classList.remove("rec");
+    setRowAccel(btn, candidate); // 아무 것도 안 눌렀으면 candidate=기존값 → 변화 없음
+  }
+  /** 적용 없이 취소 — 원래 값 복원. */
+  function cancelHkRecording() {
+    if (!recHkBtn) return;
+    const btn = recHkBtn;
+    recHkBtn = null;
+    btn.classList.remove("rec");
+    setRowAccel(btn, btn.getAttribute("data-accel") ?? "");
   }
   function startHkRecording(btn: HTMLButtonElement) {
-    stopHkRecording();
+    commitHkRecording(); // 진행 중이던 다른 녹화는 확정하고 시작
     recHkBtn = btn;
+    candidate = btn.getAttribute("data-accel") ?? "";
     btn.classList.add("rec");
     btn.textContent = "키를 누르세요…";
   }
+
   for (const el of hkRowEls) {
     const btn = el.querySelector(".hk-rec") as HTMLButtonElement;
-    btn.addEventListener("click", () => (recHkBtn === btn ? stopHkRecording() : startHkRecording(btn)));
-    (el.querySelector(".hk-clear") as HTMLButtonElement).addEventListener("click", () => {
-      stopHkRecording();
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation(); // 패널 클릭(확정)과 구분
+      if (recHkBtn !== btn) startHkRecording(btn);
+    });
+    (el.querySelector(".hk-clear") as HTMLButtonElement).addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (recHkBtn === btn) {
+        recHkBtn = null;
+        btn.classList.remove("rec");
+      }
       setRowAccel(btn, "");
     });
   }
-  // 녹화 중 키 입력을 조합으로 캡처(capture 단계 — 목록/브라우저 단축키보다 먼저 가로챔).
+  // 녹화 중 설정 패널의 다른 곳을 클릭 → 후보 확정("다른 영역 클릭 시 지정").
+  settingsEl.addEventListener("click", () => {
+    if (recHkBtn) commitHkRecording();
+  });
+
+  // 녹화 중 키 입력 — 누를 때마다 실시간 표시, Enter 확정 / Esc 취소.
   window.addEventListener(
     "keydown",
     (e) => {
       if (!recHkBtn) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (e.key === "Escape") return stopHkRecording();
-      if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return; // 수식키만 → 본 키 대기
-      const key = codeToAccelKey(e.code);
-      if (!key) return; // 등록 불가 키(한/영, CapsLock 등)
-      const combo: Combo = { meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, key };
-      // 전역 단축키가 일반 타이핑을 먹지 않도록, F키/PrintScreen 외에는 수식키 필수.
-      const bare = !combo.meta && !combo.ctrl && !combo.alt;
-      if (bare && !/^F\d+$|^PrintScreen$/.test(key)) {
-        recHkBtn.textContent = IS_MAC ? "⌘/⌃/⌥와 함께 누르세요" : "Ctrl/Alt와 함께 누르세요";
+      if (e.key === "Escape") return cancelHkRecording();
+      if (e.key === "Enter") return commitHkRecording();
+      // 수식키만 누른 상태 → 실시간으로 수식키만 표시(본 키 대기).
+      if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) {
+        const mods: string[] = [];
+        if (IS_MAC ? e.metaKey : e.ctrlKey) mods.push(IS_MAC ? "⌘" : "Ctrl");
+        if (IS_MAC && e.ctrlKey) mods.push("⌃");
+        if (e.altKey) mods.push(IS_MAC ? "⌥" : "Alt");
+        if (e.shiftKey) mods.push(IS_MAC ? "⇧" : "Shift");
+        recHkBtn.textContent = mods.length ? mods.join(IS_MAC ? "" : "+") + " …" : "키를 누르세요…";
         return;
       }
-      const btn = recHkBtn;
-      stopHkRecording();
-      setRowAccel(btn, buildAccel(combo));
+      const key = codeToAccelKey(e.code);
+      if (!key) return; // 등록 불가 키(한/영, CapsLock 등)
+      // 단독 키도 허용(사용자 요청) — 수식키 없이도 후보로 저장.
+      const combo: Combo = { meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, key };
+      candidate = buildAccel(combo);
+      recHkBtn.textContent = fmtCombo(candidate); // 실시간 표시(확정은 Enter/클릭)
+    },
+    true
+  );
+  // PrintScreen은 브라우저에서 keydown이 안 오고 keyup만 온다 → keyup으로 별도 인식.
+  window.addEventListener(
+    "keyup",
+    (e) => {
+      if (!recHkBtn || e.code !== "PrintScreen") return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const combo: Combo = { meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, key: "PrintScreen" };
+      candidate = buildAccel(combo);
+      recHkBtn.textContent = fmtCombo(candidate);
     },
     true
   );
@@ -390,6 +444,7 @@ declare const bc: Bc;
   }
 
   function openSettings() {
+    void bc.suspendHotkeys(); // 설정 중엔 전역 단축키 해제 → 조합 눌러도 캡처 안 발동
     bc.getHotkeys().then((hk) => {
       for (const el of hkRowEls) {
         const key = el.getAttribute("data-hk") as keyof HotkeyMap;
@@ -399,14 +454,16 @@ declare const bc: Bc;
     });
   }
   function closeSettings() {
-    stopHkRecording();
+    cancelHkRecording();
     settingsEl.classList.add("hidden");
+    void bc.resumeHotkeys(); // 설정 닫으면 전역 단축키 재등록
   }
 
   document.getElementById("settings-open")!.addEventListener("click", openSettings);
   document.getElementById("settings-close")!.addEventListener("click", closeSettings);
   document.getElementById("set-cancel")!.addEventListener("click", closeSettings);
   document.getElementById("set-save")!.addEventListener("click", async () => {
+    commitHkRecording(); // 녹화 중이면 후보를 먼저 확정
     const next: Partial<HotkeyMap> = {};
     for (const el of hkRowEls) {
       const key = el.getAttribute("data-hk") as keyof HotkeyMap;

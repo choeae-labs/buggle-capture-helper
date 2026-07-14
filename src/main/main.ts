@@ -16,6 +16,8 @@ app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 
 let tray: Tray | null = null;
 let preview: BrowserWindow | null = null;
+let editor: BrowserWindow | null = null;
+let editorTargetId: string | null = null;
 
 const PREVIEW_HEADER_H = 46; // 접었을 때 남길 헤더 높이
 let previewCollapsed = false;
@@ -84,7 +86,10 @@ async function runCapture(kind: "full" | "region" | "fixed" | "setFixed") {
 
 function flashPreview() {
   ensurePreview();
-  preview?.showInactive();
+  // 캡처 직후엔 창을 활성화(포커스)해, 클릭 없이 바로 Ctrl+C로 방금 캡처를 복사할 수 있게 한다.
+  // (새 캡처는 렌더러에서 자동 선택됨.) show()는 showInactive와 달리 포커스를 준다.
+  preview?.show();
+  preview?.focus();
   preview?.webContents.send("captures", store.list());
 }
 
@@ -157,7 +162,12 @@ function ensurePreview() {
   };
   preview.on("moved", savePos);
   preview.on("resized", saveSize);
-  preview.on("closed", () => (preview = null));
+  // 안전장치: 설정 중 창이 숨겨져도 전역 단축키가 죽은 채 남지 않게 재등록(멱등).
+  preview.on("hide", () => registerHotkeys());
+  preview.on("closed", () => {
+    preview = null;
+    registerHotkeys();
+  });
 }
 
 function togglePreview() {
@@ -173,6 +183,35 @@ function showPreview() {
   if (!preview || preview.isDestroyed()) return;
   preview.showInactive();
   preview.webContents.send("captures", store.list());
+}
+
+/* ===== 이미지 편집 창 ===== */
+function openEditor(id: string) {
+  const it = store.get(id);
+  if (!it || it.kind !== "image") return; // 이미지 캡처만 편집
+  if (editor && !editor.isDestroyed()) editor.close();
+  editorTargetId = id;
+  editor = new BrowserWindow({
+    width: 1100,
+    height: 780,
+    minWidth: 700,
+    minHeight: 500,
+    backgroundColor: "#0f131b",
+    title: "buggle 캡처 편집",
+    show: false,
+    webPreferences: {
+      contextIsolation: false,
+      nodeIntegration: true, // require('fabric'), ipcRenderer
+      sandbox: false,
+    },
+  });
+  editor.setMenuBarVisibility(false);
+  editor.loadFile(path.join(__dirname, "../renderer/editor.html"));
+  editor.once("ready-to-show", () => editor?.show());
+  editor.on("closed", () => {
+    editor = null;
+    editorTargetId = null;
+  });
 }
 
 /* ===== 단축키 ===== */
@@ -289,6 +328,9 @@ function registerIpc() {
   ipcMain.handle("preview:capture", (_e, kind: "full" | "region" | "fixed") => runCapture(kind));
   ipcMain.handle("preview:record", (_e, kind: "full" | "region") => runRecord(kind === "region" ? "region" : "full"));
   ipcMain.handle("preview:getHotkeys", () => loadConfig().hotkeys);
+  // 단축키 설정 중엔 전역 단축키 해제(설정 중 조합을 눌러도 캡처가 발동하지 않게). 닫으면 재등록.
+  ipcMain.handle("preview:suspendHotkeys", () => globalShortcut.unregisterAll());
+  ipcMain.handle("preview:resumeHotkeys", () => registerHotkeys());
   ipcMain.handle("preview:getRecording", () => loadConfig().recording);
   ipcMain.handle("preview:setHotkeys", (_e, hk: Partial<Hotkeys>) => {
     const cfg = saveConfig({ hotkeys: { ...loadConfig().hotkeys, ...hk } });
@@ -297,6 +339,27 @@ function registerIpc() {
     return cfg.hotkeys;
   });
   ipcMain.on("preview:hide", () => preview?.hide());
+  // 이미지 편집 창.
+  ipcMain.handle("preview:edit", (_e, id: string) => openEditor(id));
+  ipcMain.handle("editor:load", () => {
+    if (!editorTargetId) return { dataUrl: "", fileName: "image.png" };
+    const it = store.get(editorTargetId);
+    const fp = store.filePath(editorTargetId);
+    if (!it || !fp || !fs.existsSync(fp)) return { dataUrl: "", fileName: "image.png" };
+    const b64 = fs.readFileSync(fp).toString("base64");
+    // 로컬 파일을 data URL로 전달 → canvas taint 회피.
+    return { dataUrl: `data:${it.mimeType};base64,${b64}`, fileName: it.fileName };
+  });
+  ipcMain.handle("editor:save", (_e, png: Uint8Array) => {
+    if (!editorTargetId) return false;
+    const ok = store.replaceImage(editorTargetId, Buffer.from(png));
+    if (editor && !editor.isDestroyed()) editor.close();
+    flashPreview();
+    return ok;
+  });
+  ipcMain.handle("editor:cancel", () => {
+    if (editor && !editor.isDestroyed()) editor.close();
+  });
   // 접기/펼치기 → 창 높이를 헤더만 남기거나 원래 높이로 복원.
   ipcMain.on("preview:collapse", (_e, collapsed: boolean) => {
     if (!preview || preview.isDestroyed()) return;

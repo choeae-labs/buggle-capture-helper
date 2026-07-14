@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
+import { nativeImage } from "electron";
 import { capturesDir, dataDir, loadConfig } from "./config";
 
 export type CaptureKind = "image" | "gif" | "video";
@@ -125,6 +126,40 @@ export class CaptureStore extends EventEmitter {
     const it = this.get(id);
     if (!it) return false;
     it.usedAt = new Date().toISOString();
+    this.persist();
+    this.emit("change");
+    return true;
+  }
+
+  /** 편집본(PNG)으로 원본 이미지 덮어쓰기 — 파일·썸네일·메타 갱신, 항목 위치 유지. */
+  replaceImage(id: string, buffer: Buffer): boolean {
+    const it = this.get(id);
+    if (!it) return false;
+    const dir = capturesDir();
+    // 편집 결과는 항상 PNG. ext가 png가 아니면 기존 파일 제거 후 png로 전환.
+    if (it.ext !== "png") {
+      try {
+        fs.unlinkSync(path.join(dir, fileName(it.id, it.ext)));
+      } catch {
+        /* 이미 없음 */
+      }
+      it.ext = "png";
+      it.mimeType = "image/png";
+    }
+    fs.writeFileSync(path.join(dir, fileName(it.id, "png")), buffer);
+    // 썸네일 재생성(+ 실제 크기 반영).
+    try {
+      const img = nativeImage.createFromBuffer(buffer);
+      const size = img.getSize();
+      const thumb = img.resize({ width: Math.min(360, size.width || 360) }).toPNG();
+      fs.writeFileSync(path.join(dir, `${it.id}.thumb.png`), thumb);
+      if (size.width) it.width = size.width;
+      if (size.height) it.height = size.height;
+    } catch (e) {
+      console.error("[store] 썸네일 재생성 실패:", e);
+    }
+    it.kind = "image";
+    it.sizeBytes = buffer.byteLength;
     this.persist();
     this.emit("change");
     return true;

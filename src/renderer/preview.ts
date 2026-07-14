@@ -48,11 +48,16 @@ declare const bc: Bc;
     return `${Math.floor(h / 24)}일 전`;
   }
 
+  /** 플랫폼: Mac이면 단축키 표기를 ⌘/⇧ 심볼로. */
+  const IS_MAC = navigator.platform.toUpperCase().includes("MAC");
+  const PRIME = IS_MAC ? "⌘" : "Ctrl+"; // 주 수식키 표기(복사/붙여넣기 안내용)
+
   /** 하단 안내에 짧은 상태 메시지를 잠깐 표시. */
   let tipTimer: ReturnType<typeof setTimeout> | null = null;
+  if (IS_MAC) tipEl.innerHTML = "<b>⌘클릭</b> 다중선택 · <b>⌘C</b> 복사 · <b>Del</b> 삭제";
   const tipDefault = tipEl.innerHTML;
   function restoreTip() {
-    if (selected.size > 1) tipEl.textContent = `${selected.size}장 선택됨 · Ctrl+C 복사 · Del 삭제`;
+    if (selected.size > 1) tipEl.textContent = `${selected.size}장 선택됨 · ${PRIME}C 복사 · Del 삭제`;
     else tipEl.innerHTML = tipDefault;
   }
   function flashTip(msg: string) {
@@ -145,7 +150,7 @@ declare const bc: Bc;
     if (ids.length > 1) {
       // 여러 장 → 파일 목록으로 복사(브라우저에 Ctrl+V 시 여러 장 붙여넣기, GIF 애니메이션 유지).
       const ok = await bc.copyFiles(ids);
-      flashTip(ok ? `${ids.length}장 복사됨 · Ctrl+V로 붙여넣기` : "복사 실패");
+      flashTip(ok ? `${ids.length}장 복사됨 · ${PRIME}V로 붙여넣기` : "복사 실패");
     } else {
       const ok = await bc.copy(ids[0]); // 1장 → 비트맵(어디에나 이미지로 붙게).
       flashTip(ok ? "복사됨" : "복사 실패");
@@ -240,7 +245,7 @@ declare const bc: Bc;
   });
   toTop.addEventListener("click", () => listEl.scrollTo({ top: 0, behavior: "smooth" }));
 
-  /* ===== 단축키 설정 (체크박스 + 키 드롭다운) ===== */
+  /* ===== 단축키 설정 (키 레코딩 — 입력칸 클릭 후 원하는 조합을 그대로 누른다) ===== */
   const settingsEl = document.getElementById("settings") as HTMLDivElement;
   const HK_ROWS: { key: keyof HotkeyMap; label: string }[] = [
     { key: "fullScreen", label: "전체 화면 캡처하기" },
@@ -250,46 +255,66 @@ declare const bc: Bc;
     { key: "record", label: "화면 녹화하기 (GIF)" },
   ];
 
-  // 키 드롭다운 옵션(값=Electron accelerator 키, "" = 없음).
-  function keyOptionValues(): string[] {
-    const letters: string[] = [];
-    for (let i = 65; i <= 90; i++) letters.push(String.fromCharCode(i)); // A~Z
-    const fkeys: string[] = [];
-    for (let i = 1; i <= 12; i++) fkeys.push("F" + i); // F1~F12
-    return [
-      "", "PrintScreen",
-      "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
-      ...letters, ...fkeys,
-      "Insert", "Home", "End", "PageUp", "PageDown",
-      "Up", "Down", "Left", "Right", "Space",
-    ];
+  // KeyboardEvent.code → Electron accelerator 키 이름("" = 등록 불가 키).
+  function codeToAccelKey(code: string): string {
+    if (/^Key[A-Z]$/.test(code)) return code.slice(3); // KeyA → A
+    if (/^Digit[0-9]$/.test(code)) return code.slice(5); // Digit1 → 1
+    if (/^Numpad[0-9]$/.test(code)) return "num" + code.slice(6); // Numpad1 → num1
+    if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code; // F1~F24
+    const map: Record<string, string> = {
+      Space: "Space", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
+      Home: "Home", End: "End", PageUp: "PageUp", PageDown: "PageDown", Insert: "Insert",
+      PrintScreen: "PrintScreen", Backquote: "`", Minus: "-", Equal: "=",
+      BracketLeft: "[", BracketRight: "]", Backslash: "\\", Semicolon: ";", Quote: "'",
+      Comma: ",", Period: ".", Slash: "/",
+    };
+    return map[code] ?? "";
   }
-  const KEY_OPTIONS_HTML = keyOptionValues()
-    .map((v) => `<option value="${v}">${v === "" ? "없음" : v}</option>`)
-    .join("");
 
-  // accelerator 문자열 ↔ {shift,ctrl,alt,key}
-  function parseAccel(accel: string) {
-    let shift = false, ctrl = false, alt = false, key = "";
+  // accelerator 문자열 ↔ 조합 구조체. Cmd(⌘)와 Ctrl(⌃)을 구분해 다룬다.
+  // CommandOrControl은 "플랫폼 주 수식키"(Mac=⌘, Win=Ctrl)로 해석.
+  type Combo = { meta: boolean; ctrl: boolean; alt: boolean; shift: boolean; key: string };
+  function parseAccel(accel: string): Combo {
+    const c: Combo = { meta: false, ctrl: false, alt: false, shift: false, key: "" };
     for (const p of accel ? accel.split("+") : []) {
-      if (p === "Shift") shift = true;
-      else if (["CommandOrControl", "Control", "Command", "Cmd", "Ctrl"].includes(p)) ctrl = true;
-      else if (["Alt", "Option"].includes(p)) alt = true;
-      else key = p;
+      if (p === "Shift") c.shift = true;
+      else if (p === "CommandOrControl" || p === "CmdOrCtrl") (IS_MAC ? (c.meta = true) : (c.ctrl = true));
+      else if (p === "Command" || p === "Cmd" || p === "Super" || p === "Meta") c.meta = true;
+      else if (p === "Control" || p === "Ctrl") c.ctrl = true;
+      else if (p === "Alt" || p === "Option") c.alt = true;
+      else c.key = p;
     }
-    return { shift, ctrl, alt, key };
+    return c;
   }
-  function buildAccel(shift: boolean, ctrl: boolean, alt: boolean, key: string): string {
-    if (!key) return ""; // 없음 → 비활성
+  function buildAccel(c: Combo): string {
+    if (!c.key) return ""; // 없음 → 비활성
     const parts: string[] = [];
-    if (ctrl) parts.push("CommandOrControl");
-    if (alt) parts.push("Alt");
-    if (shift) parts.push("Shift");
-    parts.push(key);
+    // 주 수식키(Mac ⌘ / Win Ctrl)는 CommandOrControl로 저장 — 기본값과 호환·이식성 유지.
+    if (IS_MAC ? c.meta : c.ctrl) parts.push("CommandOrControl");
+    if (IS_MAC && c.ctrl) parts.push("Control"); // Mac의 ⌃는 별도 유지
+    if (!IS_MAC && c.meta) parts.push("Super"); // Windows 키(드묾)
+    if (c.alt) parts.push("Alt");
+    if (c.shift) parts.push("Shift");
+    parts.push(c.key);
+    return parts.join("+");
+  }
+  /** 표시용: Mac은 ⌃⌥⇧⌘ 심볼(애플 표준 순서), Windows는 Ctrl+Alt+Shift+키. */
+  function fmtCombo(accel: string): string {
+    if (!accel) return "없음";
+    const c = parseAccel(accel);
+    if (IS_MAC) {
+      return (c.ctrl ? "⌃" : "") + (c.alt ? "⌥" : "") + (c.shift ? "⇧" : "") + (c.meta ? "⌘" : "") + c.key;
+    }
+    const parts: string[] = [];
+    if (c.ctrl) parts.push("Ctrl");
+    if (c.meta) parts.push("Win");
+    if (c.alt) parts.push("Alt");
+    if (c.shift) parts.push("Shift");
+    parts.push(c.key);
     return parts.join("+");
   }
 
-  // 설정 행을 그린다(최초 1회).
+  // 설정 행을 그린다(최초 1회). 레코더 버튼(data-accel에 현재 값 보관) + 지우기.
   const groupEl = document.getElementById("hk-group") as HTMLDivElement;
   for (const row of HK_ROWS) {
     const el = document.createElement("div");
@@ -298,28 +323,70 @@ declare const bc: Bc;
     el.innerHTML = `
       <span class="lab">${row.label}</span>
       <div class="hkctrl">
-        <label class="mod"><input type="checkbox" data-mod="shift" /> Shift</label>
-        <label class="mod"><input type="checkbox" data-mod="ctrl" /> Ctrl</label>
-        <label class="mod"><input type="checkbox" data-mod="alt" /> Alt</label>
-        <select data-key>${KEY_OPTIONS_HTML}</select>
+        <button type="button" class="hk-rec" data-accel="">없음</button>
+        <button type="button" class="hk-clear" title="단축키 지우기(비활성)">✕</button>
       </div>`;
     groupEl.appendChild(el);
   }
   const hkRowEls = Array.from(groupEl.querySelectorAll<HTMLDivElement>(".hkrow"));
 
+  // ---- 레코딩 상태 ----
+  let recHkBtn: HTMLButtonElement | null = null; // 현재 녹화 중인 버튼
+  function setRowAccel(btn: HTMLButtonElement, accel: string) {
+    btn.setAttribute("data-accel", accel);
+    btn.textContent = fmtCombo(accel);
+    btn.classList.toggle("empty", !accel);
+  }
+  function stopHkRecording() {
+    if (!recHkBtn) return;
+    setRowAccel(recHkBtn, recHkBtn.getAttribute("data-accel") ?? ""); // 라벨 복원
+    recHkBtn.classList.remove("rec");
+    recHkBtn = null;
+  }
+  function startHkRecording(btn: HTMLButtonElement) {
+    stopHkRecording();
+    recHkBtn = btn;
+    btn.classList.add("rec");
+    btn.textContent = "키를 누르세요…";
+  }
+  for (const el of hkRowEls) {
+    const btn = el.querySelector(".hk-rec") as HTMLButtonElement;
+    btn.addEventListener("click", () => (recHkBtn === btn ? stopHkRecording() : startHkRecording(btn)));
+    (el.querySelector(".hk-clear") as HTMLButtonElement).addEventListener("click", () => {
+      stopHkRecording();
+      setRowAccel(btn, "");
+    });
+  }
+  // 녹화 중 키 입력을 조합으로 캡처(capture 단계 — 목록/브라우저 단축키보다 먼저 가로챔).
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (!recHkBtn) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.key === "Escape") return stopHkRecording();
+      if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return; // 수식키만 → 본 키 대기
+      const key = codeToAccelKey(e.code);
+      if (!key) return; // 등록 불가 키(한/영, CapsLock 등)
+      const combo: Combo = { meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, key };
+      // 전역 단축키가 일반 타이핑을 먹지 않도록, F키/PrintScreen 외에는 수식키 필수.
+      const bare = !combo.meta && !combo.ctrl && !combo.alt;
+      if (bare && !/^F\d+$|^PrintScreen$/.test(key)) {
+        recHkBtn.textContent = IS_MAC ? "⌘/⌃/⌥와 함께 누르세요" : "Ctrl/Alt와 함께 누르세요";
+        return;
+      }
+      const btn = recHkBtn;
+      stopHkRecording();
+      setRowAccel(btn, buildAccel(combo));
+    },
+    true
+  );
+
   function fillRow(el: HTMLDivElement, accel: string) {
-    const p = parseAccel(accel);
-    (el.querySelector('[data-mod="shift"]') as HTMLInputElement).checked = p.shift;
-    (el.querySelector('[data-mod="ctrl"]') as HTMLInputElement).checked = p.ctrl;
-    (el.querySelector('[data-mod="alt"]') as HTMLInputElement).checked = p.alt;
-    (el.querySelector("[data-key]") as HTMLSelectElement).value = p.key;
+    setRowAccel(el.querySelector(".hk-rec") as HTMLButtonElement, accel);
   }
   function readRow(el: HTMLDivElement): string {
-    const shift = (el.querySelector('[data-mod="shift"]') as HTMLInputElement).checked;
-    const ctrl = (el.querySelector('[data-mod="ctrl"]') as HTMLInputElement).checked;
-    const alt = (el.querySelector('[data-mod="alt"]') as HTMLInputElement).checked;
-    const key = (el.querySelector("[data-key]") as HTMLSelectElement).value;
-    return buildAccel(shift, ctrl, alt, key);
+    return (el.querySelector(".hk-rec") as HTMLButtonElement).getAttribute("data-accel") ?? "";
   }
 
   function openSettings() {
@@ -332,6 +399,7 @@ declare const bc: Bc;
     });
   }
   function closeSettings() {
+    stopHkRecording();
     settingsEl.classList.add("hidden");
   }
 
@@ -381,7 +449,7 @@ declare const bc: Bc;
 
   // 캡처/녹화 버튼 툴팁에 단축키 + 녹화 최대시간 반영(설정 변경 시 갱신).
   function fmtAccel(a: string): string {
-    return a.replace("CommandOrControl", "Ctrl").replace("Command", "Cmd").replace(/\+/g, " + ");
+    return fmtCombo(a); // Mac: ⌘⇧1 심볼 / Windows: Ctrl+Shift+1
   }
   function applyTooltips(hk: HotkeyMap, maxSeconds: number) {
     const set = (sel: string, base: string, accel: string) => {

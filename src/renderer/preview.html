@@ -86,8 +86,14 @@
       .item .acts button { padding: 2px 6px; font-size: 10px; background: rgba(0,0,0,0.55); }
       .item .acts button:hover { background: rgba(0,0,0,0.82); }
       #empty { color: #9aa4b2; text-align: center; padding: 24px 8px; }
-      footer.tip { padding: 5px 8px; background: #171b24; color: #6b7280; font-size: 10px; text-align: center; border-top: 1px solid rgba(255,255,255,0.06); }
-      footer.tip b { color: #9aa4b2; font-weight: 600; }
+      footer.tipbar { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: #171b24; border-top: 1px solid rgba(255,255,255,0.06); }
+      footer.tipbar .tip { flex: 1; min-width: 0; color: #6b7280; font-size: 10px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      footer.tipbar .tip b { color: #9aa4b2; font-weight: 600; }
+      footer.tipbar .tip-clear {
+        flex: none; font-size: 10px; padding: 3px 8px; border-radius: 5px; cursor: pointer; white-space: nowrap;
+        color: #fca5a5; background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3);
+      }
+      footer.tipbar .tip-clear:hover { background: rgba(239,68,68,0.22); color: #fecaca; }
       .hidden { display: none !important; }
 
       /* 맨 위로 플로팅 버튼 */
@@ -192,7 +198,10 @@
         </div>
       </div>
       <div id="list"><div id="empty">아직 캡처가 없어요.<br />단축키로 캡처해보세요.</div></div>
-      <footer class="tip" id="tip"><b>Ctrl+클릭</b> 다중선택 · <b>Ctrl+C</b> 복사 · <b>Del</b> 삭제</footer>
+      <footer class="tipbar">
+        <span class="tip" id="tip"><b>Ctrl+클릭</b> 다중선택 · <b>Ctrl+C</b> 복사 · <b>Del</b> 삭제</span>
+        <button id="clearall-btn" class="tip-clear" title="저장된 캡처 전체 삭제">전체삭제</button>
+      </footer>
       <button id="toTop" title="맨 위로">&#8593;</button>
 
       <!-- 단축키 설정 패널 -->

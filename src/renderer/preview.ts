@@ -469,11 +469,17 @@ declare const bc: Bc;
   document.getElementById("settings-open")!.addEventListener("click", openSettings);
   document.getElementById("settings-close")!.addEventListener("click", closeSettings);
   document.getElementById("set-cancel")!.addEventListener("click", closeSettings);
-  document.getElementById("set-clearall")!.addEventListener("click", async () => {
+  async function doClearAll() {
+    if (items.length === 0) {
+      flashTip("삭제할 캡처가 없어요");
+      return;
+    }
     if (!confirm("저장된 캡처를 모두 삭제할까요? 되돌릴 수 없습니다.")) return;
     const n = await bc.clearAll();
     flashTip(`${n}개 전체 삭제됨`);
-  });
+  }
+  document.getElementById("set-clearall")!.addEventListener("click", doClearAll); // 설정 패널
+  document.getElementById("clearall-btn")!.addEventListener("click", doClearAll); // 하단 바
   document.getElementById("set-save")!.addEventListener("click", async () => {
     commitHkRecording(); // 녹화 중이면 후보를 먼저 확정
     const next: Partial<HotkeyMap> = {};

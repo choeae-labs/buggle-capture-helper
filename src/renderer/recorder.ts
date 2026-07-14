@@ -44,14 +44,19 @@
   }
 
   async function begin(opts: StartOpts) {
+    // 캡처 해상도를 4K raw가 아니라 '출력에 필요한 만큼'으로 제약 — 녹화 중 시스템 전체 저하의 최대 원인 제거.
+    // 전체화면: cropW=displayW → captureW=maxWidth. 영역: 크롭이 maxWidth로 나오도록 전체 폭을 역산(작은 영역도 선명).
+    const cropWDip = opts.crop ? Math.max(1, opts.crop.width) : opts.displayWidthDip;
+    const captureW = Math.min(4096, Math.max(opts.maxWidth, Math.round((opts.maxWidth * opts.displayWidthDip) / cropWDip)));
+    const captureH = Math.min(4096, Math.max(1, Math.round((captureW * opts.displayHeightDip) / opts.displayWidthDip)));
     const constraints: any = {
       audio: false,
       video: {
         mandatory: {
           chromeMediaSource: "desktop",
           chromeMediaSourceId: opts.sourceId,
-          maxWidth: 4096,
-          maxHeight: 4096,
+          maxWidth: captureW, // was 4096 — target 기반(핵심 성능 개선)
+          maxHeight: captureH,
           maxFrameRate: opts.fps,
         },
       },
@@ -85,25 +90,48 @@
     gif = GIFEncoder();
     frameCount = 0;
     running = true;
-    const delay = Math.max(20, Math.round(1000 / opts.fps));
+
+    // 전역 팔레트: quantize(256색 median-cut)를 매 프레임 하던 걸 1회 + 주기 갱신만으로(비용 대폭↓).
+    // applyPalette만 매 프레임. quantize/applyPalette는 format을 반드시 일치시킨다.
+    const FORMAT = "rgb565";
+    const COLORS = 256;
+    const REFRESH_EVERY = 40; // ≈10fps에서 4초마다 팔레트 재계산(배경/테마 변화 대응)
+    let palette: any = null;
+
+    const delayMs = Math.max(20, Math.round(1000 / opts.fps));
     const maxFrames = opts.fps * 60; // 안전 상한(정상 정지는 main의 finalize)
+    let nextAt = performance.now();
+    let lastAt = nextAt;
+    let first = true;
 
     const tick = () => {
       if (!running || !ctx || !canvas || !video) return;
+      const now = performance.now();
       ctx.drawImage(video, sx, sy, sw, sh, 0, 0, targetW, targetH);
       const { data } = ctx.getImageData(0, 0, targetW, targetH);
-      const palette = quantize(data, 256);
-      const index = applyPalette(data, palette);
-      gif.writeFrame(index, targetW, targetH, { palette, delay });
+
+      if (!palette || frameCount % REFRESH_EVERY === 0) palette = quantize(data, COLORS, { format: FORMAT });
+      const index = applyPalette(data, palette, FORMAT);
+
+      // GIF 타임라인을 실제 경과시간으로(고정 delay 금지 → 밀림 누적/재생길이 왜곡 방지).
+      const frameDelay = first ? delayMs : Math.max(20, Math.round(now - lastAt));
+      lastAt = now;
+      first = false;
+
+      gif.writeFrame(index, targetW, targetH, { palette, delay: frameDelay });
       frameCount++;
       if (frameCount === 1) grabThumb(targetW, targetH);
       if (frameCount >= maxFrames) {
         void finalize();
         return;
       }
-      loopTimer = setTimeout(tick, delay);
+
+      // 드리프트 보정 + 밀리면 프레임 드랍(연속발사 스파이럴 방지).
+      nextAt += delayMs;
+      if (now > nextAt + delayMs) nextAt = now + delayMs;
+      loopTimer = setTimeout(tick, Math.max(0, nextAt - performance.now()));
     };
-    loopTimer = setTimeout(tick, delay);
+    loopTimer = setTimeout(tick, delayMs);
   }
 
   function grabThumb(w: number, h: number) {

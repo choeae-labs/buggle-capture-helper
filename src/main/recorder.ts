@@ -108,24 +108,41 @@ function createRegionFrame(display: Electron.Display, region: Rect) {
 }
 
 function createEncoder() {
+  // 인코더 창은 desktopCapturer 프레임을 계속 받아야 해서 렌더링이 살아 있어야 한다.
+  // 과거엔 화면 밖(-20000)에 뒀는데 (1) macOS가 그 좌표를 안 지켜 좌상단에 빈 흰 창으로 보이고
+  // (2) 그 창이 전체화면 녹화에 그대로 찍혔다(setContentProtection 누락). 또 완전 화면밖/숨김은
+  // occlusion 판정으로 렌더러가 throttle돼 프레임이 멈출 수 있다.
+  // → '온스크린 1x1 투명 + opacity 0 + setContentProtection' 조합:
+  //   compositor엔 '보이는 창'이라 프레임 유지, 사용자 눈엔 투명·초소형이라 안 보이고,
+  //   setContentProtection(true)가 화면 캡처/녹화에서 자기 자신을 제외한다(indicator/regionFrame과 동일).
+  const wa = screen.getPrimaryDisplay().workArea;
   encoder = new BrowserWindow({
-    // 화면 밖에 '표시'해 compositor가 계속 프레임을 그리게 한다(show:false면 비디오가 멈춤).
-    x: -20000,
-    y: -20000,
-    width: 480,
-    height: 320,
-    show: false,
+    x: wa.x,
+    y: wa.y,
+    width: 16,
+    height: 16,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    fullscreenable: false,
     skipTaskbar: true,
     focusable: false,
+    show: false,
     webPreferences: {
       contextIsolation: false,
       nodeIntegration: true, // require('gifenc'), ipcRenderer 사용
       sandbox: false,
-      backgroundThrottling: false,
+      backgroundThrottling: false, // 온스크린이어도 타이머/미디어 유지(추가 안전판)
     },
   });
+  encoder.setContentProtection(true); // 화면 캡처/녹화에서 제외 → GIF에 인코더 창이 안 찍힘
+  encoder.setIgnoreMouseEvents(true); // 온스크린이어도 클릭은 아래로 통과
+  encoder.setOpacity(0); // 사용자 눈엔 완전 투명(프레임은 계속 흐름)
   encoder.loadFile(path.join(__dirname, "../renderer/recorder.html"));
-  encoder.once("ready-to-show", () => encoder?.showInactive()); // 화면 밖이라 안 보임
+  encoder.once("ready-to-show", () => encoder?.showInactive()); // opacity 0 + 1x1 투명 → 안 보임, 포커스 안 뺏김
   encoder.on("closed", () => (encoder = null));
 }
 

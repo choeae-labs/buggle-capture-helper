@@ -182,6 +182,24 @@ export class CaptureStore extends EventEmitter {
     return true;
   }
 
+  /** 전체 삭제 — 모든 캡처 파일·썸네일 제거 후 인덱스 비움. 삭제한 개수 반환. */
+  clearAll(): number {
+    const n = this.items.length;
+    for (const it of this.items) {
+      for (const p of [path.join(capturesDir(), fileName(it.id, it.ext)), path.join(capturesDir(), `${it.id}.thumb.png`)]) {
+        try {
+          fs.unlinkSync(p);
+        } catch {
+          /* 이미 없음 */
+        }
+      }
+    }
+    this.items = [];
+    this.persist();
+    this.emit("change");
+    return n;
+  }
+
   /** 보관 정책 — 오래된 항목(기간 초과) + 최대 개수 초과분을 오래된 것부터 삭제. */
   prune() {
     const cfg = loadConfig();

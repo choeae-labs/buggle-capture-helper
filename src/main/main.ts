@@ -338,6 +338,20 @@ function registerIpc() {
     updateTrayMenu(); // 트레이 라벨 갱신
     return cfg.hotkeys;
   });
+  // 보관 설정(최대 개수·보관 기간) 조회/저장 + 전체 삭제.
+  ipcMain.handle("preview:getSettings", () => {
+    const c = loadConfig();
+    return { maxItems: c.maxItems, retentionDays: c.retentionDays };
+  });
+  ipcMain.handle("preview:setSettings", (_e, s: { maxItems?: number; retentionDays?: number }) => {
+    const next: Partial<{ maxItems: number; retentionDays: number }> = {};
+    if (typeof s.maxItems === "number" && isFinite(s.maxItems)) next.maxItems = Math.max(1, Math.min(1000, Math.round(s.maxItems)));
+    if (typeof s.retentionDays === "number" && isFinite(s.retentionDays)) next.retentionDays = Math.max(1, Math.min(365, Math.round(s.retentionDays)));
+    const c = saveConfig(next);
+    store.prune(); // 개수/기간 줄이면 즉시 반영
+    return { maxItems: c.maxItems, retentionDays: c.retentionDays };
+  });
+  ipcMain.handle("preview:clearAll", () => store.clearAll());
   ipcMain.on("preview:hide", () => preview?.hide());
   // 이미지 편집 창.
   ipcMain.handle("preview:edit", (_e, id: string) => openEditor(id));

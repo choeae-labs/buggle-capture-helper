@@ -24,6 +24,9 @@ interface Bc {
   suspendHotkeys: () => Promise<void>;
   resumeHotkeys: () => Promise<void>;
   getRecording: () => Promise<{ fps: number; maxSeconds: number; maxWidth: number }>;
+  getSettings: () => Promise<{ maxItems: number; retentionDays: number }>;
+  setSettings: (s: { maxItems?: number; retentionDays?: number }) => Promise<{ maxItems: number; retentionDays: number }>;
+  clearAll: () => Promise<number>;
   hide: () => void;
   collapse: (v: boolean) => void;
   setTrayIcon: (d: { p16: string; p32: string }) => void;
@@ -452,6 +455,10 @@ declare const bc: Bc;
       }
       settingsEl.classList.remove("hidden");
     });
+    void bc.getSettings().then((s) => {
+      (document.getElementById("set-maxitems") as HTMLInputElement).value = String(s.maxItems);
+      (document.getElementById("set-retention") as HTMLInputElement).value = String(s.retentionDays);
+    });
   }
   function closeSettings() {
     cancelHkRecording();
@@ -462,6 +469,11 @@ declare const bc: Bc;
   document.getElementById("settings-open")!.addEventListener("click", openSettings);
   document.getElementById("settings-close")!.addEventListener("click", closeSettings);
   document.getElementById("set-cancel")!.addEventListener("click", closeSettings);
+  document.getElementById("set-clearall")!.addEventListener("click", async () => {
+    if (!confirm("저장된 캡처를 모두 삭제할까요? 되돌릴 수 없습니다.")) return;
+    const n = await bc.clearAll();
+    flashTip(`${n}개 전체 삭제됨`);
+  });
   document.getElementById("set-save")!.addEventListener("click", async () => {
     commitHkRecording(); // 녹화 중이면 후보를 먼저 확정
     const next: Partial<HotkeyMap> = {};
@@ -470,9 +482,16 @@ declare const bc: Bc;
       next[key] = readRow(el);
     }
     await bc.setHotkeys(next);
+    // 보관 설정도 함께 저장.
+    const mi = parseInt((document.getElementById("set-maxitems") as HTMLInputElement).value, 10);
+    const rd = parseInt((document.getElementById("set-retention") as HTMLInputElement).value, 10);
+    await bc.setSettings({
+      maxItems: Number.isFinite(mi) ? mi : undefined,
+      retentionDays: Number.isFinite(rd) ? rd : undefined,
+    });
     refreshTooltips(); // 바뀐 단축키를 툴팁에 반영
     closeSettings();
-    flashTip("단축키 저장됨");
+    flashTip("설정 저장됨");
   });
 
   // 트레이 아이콘 = Buggle 로고. SVG를 PNG로 래스터화해 main에 전달(트레이는 래스터만 지원).

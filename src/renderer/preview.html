@@ -131,6 +131,19 @@
         background: transparent; color: #6b7280; border: none; cursor: pointer;
       }
       .hkctrl .hk-clear:hover { color: #e6e9ef; background: rgba(255,255,255,0.08); }
+      .store-group { margin-top: 10px; }
+      .store-group .setrow { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid rgba(255,255,255,0.05); }
+      .store-group .setrow:first-of-type { border-top: none; }
+      .store-group .setrow .lab { flex: 1; font-size: 12px; color: #e6e9ef; }
+      .store-group .setrow input[type="number"] {
+        width: 84px; background: #0f131b; color: #e6e9ef; border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 6px; padding: 5px 8px; font-size: 12px; text-align: right;
+      }
+      .store-group .danger {
+        width: 100%; margin-top: 8px; padding: 8px; border-radius: 7px;
+        background: rgba(239,68,68,0.14); color: #fca5a5; border: 1px solid rgba(239,68,68,0.4); font-size: 12px;
+      }
+      .store-group .danger:hover { background: rgba(239,68,68,0.24); color: #fecaca; }
       #settings .set-foot { padding: 10px 12px; background: #171b24; display: flex; gap: 8px; }
       #settings .set-foot button { flex: 1; padding: 8px; }
       #settings .set-foot .primary { background: #3b82f6; color: #fff; }
@@ -194,8 +207,20 @@
             <div class="grp-title">단축키</div>
             <!-- .hkrow 는 JS가 채웁니다 -->
           </div>
+          <div class="hk-group store-group">
+            <div class="grp-title">보관</div>
+            <div class="setrow">
+              <span class="lab">최대 보관 개수</span>
+              <input type="number" id="set-maxitems" min="1" max="1000" />
+            </div>
+            <div class="setrow">
+              <span class="lab">보관 기간(일)</span>
+              <input type="number" id="set-retention" min="1" max="365" />
+            </div>
+            <button type="button" id="set-clearall" class="danger">저장된 캡처 전체 삭제</button>
+          </div>
         </div>
-        <div class="set-hint">입력칸을 클릭한 뒤 원하는 키를 누르면 실시간 표시됩니다(단독 키도 가능). <b>Enter</b> 또는 다른 곳 클릭 시 지정 · <b>Esc</b> 취소 · <b>✕</b> 비활성.</div>
+        <div class="set-hint">입력칸을 클릭한 뒤 원하는 키를 누르면 실시간 표시됩니다(단독 키도 가능). <b>Enter</b> 또는 다른 곳 클릭 시 지정 · <b>Esc</b> 취소 · <b>✕</b> 비활성. 개수·기간을 넘거나 전체 삭제하면 저장 공간에서 지워집니다.</div>
         <div class="set-foot">
           <button id="set-cancel">취소</button>
           <button id="set-save" class="primary">저장</button>

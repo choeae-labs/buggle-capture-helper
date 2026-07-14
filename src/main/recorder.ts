@@ -248,7 +248,10 @@ export function registerRecorderIpc(): void {
   // 인코더 완료 — GIF 저장.
   ipcMain.on(
     "recorder:done",
-    (_e, data: { gif: Uint8Array; thumb: Uint8Array; width: number; height: number; frames: number }) => {
+    (
+      _e,
+      data: { gif: Uint8Array; thumb: Uint8Array; width: number; height: number; frames: number; capW?: number; capH?: number; fpsActual?: number },
+    ) => {
       try {
         const buffer = Buffer.from(data.gif);
         const thumb = Buffer.from(data.thumb);
@@ -263,7 +266,9 @@ export function registerRecorderIpc(): void {
             height: data.height,
           });
           const mb = (buffer.byteLength / (1024 * 1024)).toFixed(2);
-          notify("녹화 저장됨", `GIF ${data.frames}프레임 · ${mb} MB`);
+          // 실측: 캡처 실제 해상도·fps. "@10fps"+캡처폭 target 근처면 스로틀 성공 / "@60fps"면 미적용(근본안 필요).
+          const cap = data.capW ? ` · 캡처 ${data.capW}x${data.capH}@${data.fpsActual}fps` : "";
+          notify("녹화 저장됨", `GIF ${data.frames}프레임 · ${mb} MB${cap}`);
         } else {
           notify("녹화 실패", "프레임이 캡처되지 않았습니다.");
         }

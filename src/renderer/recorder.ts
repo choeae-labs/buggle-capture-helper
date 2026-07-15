@@ -109,12 +109,19 @@
     frameCount = 0;
     running = true;
 
-    // 전역 팔레트: quantize(256색 median-cut)를 매 프레임 하던 걸 1회 + 주기 갱신만으로(비용 대폭↓).
+    // 전역 팔레트: quantize(median-cut)를 매 프레임 하던 걸 1회 + 주기 갱신만으로(비용 대폭↓).
     // applyPalette만 매 프레임. quantize/applyPalette는 format을 반드시 일치시킨다.
+    // 인터프레임 델타: 255색만 쓰고 인덱스 255를 '투명'으로 예약 → 이전 프레임과 '완전히 같은' 픽셀만
+    //   투명 처리(임계값 0 = 화질 무손실). 전역 팔레트라 배경 안 바뀌면 인덱스가 같아 투명 처리가 잘 되고,
+    //   dispose:1(이전 프레임 유지)로 투명 영역이 이전 화면으로 채워진다 → 용량 대폭 절감(정적 화면).
     const FORMAT = "rgb565";
-    const COLORS = 256;
+    const COLORS = 255; // 실제 색은 255색까지 — 인덱스 255를 '투명'으로 예약
+    const TRANSPARENT = 255;
     const REFRESH_EVERY = 40; // ≈10fps에서 4초마다 팔레트 재계산(배경/테마 변화 대응)
-    let palette: any = null;
+    // applyPalette용(실제 색, 255 미출현) vs writeFrame용(항상 256색 패딩 → 색테이블이 투명 인덱스 255를 담음).
+    let paletteReal: any = null;
+    let palettePad: any = null;
+    let prevIndex: Uint8Array | null = null; // 직전 프레임 인덱스(치환 전 원본) — 델타 비교용
 
     const delayMs = Math.max(20, Math.round(1000 / opts.fps));
     const frameInterval = 1000 / opts.fps;
@@ -126,11 +133,27 @@
       if (!ctx || !canvas || !video) return;
       ctx.drawImage(video, sx, sy, sw, sh, 0, 0, targetW, targetH);
       const { data } = ctx.getImageData(0, 0, targetW, targetH);
-      if (!palette || frameCount % REFRESH_EVERY === 0) palette = quantize(data, COLORS, { format: FORMAT });
-      const index = applyPalette(data, palette, FORMAT);
+      if (!paletteReal || frameCount % REFRESH_EVERY === 0) {
+        paletteReal = quantize(data, COLORS, { format: FORMAT }); // ≤255색 (applyPalette가 255를 반환하지 않음)
+        palettePad = paletteReal.slice();
+        while (palettePad.length < 256) palettePad.push([0, 0, 0]); // 색테이블 256 확정 → 투명 인덱스 255 유효
+        prevIndex = null; // 팔레트 바뀌면 이전 인덱스와 비교 불가 → 이 프레임은 전체 기록
+      }
+      const index: Uint8Array = applyPalette(data, paletteReal, FORMAT); // 값 0..254 (255는 안 나옴)
       const frameDelay = lastAt === -Infinity ? delayMs : Math.max(20, Math.round(nowTs - lastAt));
       lastAt = nowTs;
-      gif.writeFrame(index, targetW, targetH, { palette, delay: frameDelay });
+
+      if (prevIndex && prevIndex.length === index.length) {
+        // 델타: 직전과 완전히 같은 픽셀만 투명(255)으로 → LZW가 크게 압축(화질 무손실).
+        const out = index.slice();
+        const prev = prevIndex;
+        for (let i = 0; i < out.length; i++) if (index[i] === prev[i]) out[i] = TRANSPARENT;
+        gif.writeFrame(out, targetW, targetH, { palette: palettePad, delay: frameDelay, transparent: true, transparentIndex: TRANSPARENT, dispose: 1 });
+      } else {
+        // 첫 프레임 또는 팔레트 갱신 프레임 → 전체 기록(기준 프레임).
+        gif.writeFrame(index, targetW, targetH, { palette: palettePad, delay: frameDelay });
+      }
+      prevIndex = index; // 치환 전 원본 인덱스를 다음 프레임 비교용으로 보관
       frameCount++;
       if (frameCount === 1) grabThumb(targetW, targetH);
     };

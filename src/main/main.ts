@@ -265,7 +265,12 @@ function updateTrayMenu() {
       },
     },
     { type: "separator" },
-    { label: `API 포트: ${cfg.port}`, enabled: false },
+    // 업데이트 — 다운로드 완료 시 즉시 적용 메뉴 노출(상주 앱이라 '종료 시 설치'만으론 적용 기회가 없음).
+    ...(updateReadyVersion
+      ? [{ label: `⬆ 업데이트 적용하고 재시작 (v${updateReadyVersion})`, click: () => applyUpdateNow() }]
+      : [{ label: "업데이트 확인", click: () => void manualCheckForUpdates() }]),
+    { type: "separator" },
+    { label: `API 포트: ${cfg.port} · v${app.getVersion()}`, enabled: false },
     { label: "종료", click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
@@ -406,22 +411,61 @@ function protocolUrlFromArgv(argv: string[]): string | null {
 }
 
 /** 자동 업데이트 — 설치 빌드에서만. 새 버전을 조용히 받아 다음 종료/재시작 시 적용. */
-function checkForUpdates() {
-  if (!app.isPackaged) return; // dev 제외
+/** 상주 앱이라 시작 시 1회 확인만으론 새 버전을 영영 못 본다 → 주기적으로 재확인. */
+const UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2시간
+let updateReadyVersion: string | null = null; // 다운로드 완료된 새 버전(트레이 '적용' 메뉴용)
+
+/** 자동 업데이트 지원 여부(설치 빌드 + Windows). */
+function canAutoUpdate(): boolean {
   // macOS는 Developer ID 코드서명 없이는 electron-updater(Squirrel.Mac)가 서명 검증에서 실패한다.
   // 서명 붙이기 전까지 mac은 자동업데이트를 끄고 Homebrew(brew upgrade)로 갱신한다.
-  if (process.platform === "darwin") return;
+  return app.isPackaged && process.platform !== "darwin";
+}
+
+function checkForUpdates() {
+  if (!canAutoUpdate()) return;
   try {
     const { autoUpdater } = electronUpdater;
     autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.autoInstallOnAppQuit = true; // 종료 시에도 적용(트레이에서 즉시 적용도 가능)
     autoUpdater.on("update-downloaded", (info) => {
-      notify("업데이트 준비됨", `새 버전 ${info.version} — 앱을 다시 시작하면 적용돼요.`);
+      updateReadyVersion = info.version;
+      updateTrayMenu(); // 트레이에 "업데이트 적용하고 재시작" 노출
+      notify("업데이트 준비됨", `새 버전 ${info.version} — 트레이 메뉴의 '업데이트 적용하고 재시작'으로 바로 적용할 수 있어요.`);
     });
     autoUpdater.on("error", (e) => console.warn("[updater] 오류:", e?.message ?? e));
-    void autoUpdater.checkForUpdates();
+    const run = () => void autoUpdater.checkForUpdates().catch((e) => console.warn("[updater] 확인 실패:", e?.message ?? e));
+    run(); // 시작 시 1회
+    setInterval(run, UPDATE_CHECK_INTERVAL_MS); // 이후 주기적으로
   } catch (e) {
     console.warn("[updater] 초기화 실패:", e);
+  }
+}
+
+/** 다운로드된 업데이트를 즉시 적용(앱 종료 후 설치·재시작). */
+function applyUpdateNow() {
+  try {
+    electronUpdater.autoUpdater.quitAndInstall();
+  } catch (e) {
+    console.warn("[updater] 적용 실패:", e);
+    notify("업데이트 적용 실패", (e as Error)?.message ?? "알 수 없는 오류");
+  }
+}
+
+/** 트레이 '업데이트 확인' — 사용자가 직접 확인하고 결과를 알림으로 받는다. */
+async function manualCheckForUpdates() {
+  if (!app.isPackaged) return notify("업데이트 확인", "개발 모드에선 지원하지 않아요.");
+  if (process.platform === "darwin") return notify("업데이트 확인", "macOS는 brew upgrade로 갱신해주세요.");
+  if (updateReadyVersion) {
+    return notify("업데이트 준비됨", `새 버전 ${updateReadyVersion} — 트레이의 '업데이트 적용하고 재시작'을 눌러주세요.`);
+  }
+  try {
+    const r = await electronUpdater.autoUpdater.checkForUpdates();
+    const v = r?.updateInfo?.version;
+    if (v && v !== app.getVersion()) notify("업데이트 발견", `새 버전 ${v} — 내려받는 중이에요.`);
+    else notify("업데이트 확인", `최신 버전입니다 (v${app.getVersion()}).`);
+  } catch (e) {
+    notify("업데이트 확인 실패", (e as Error)?.message ?? "네트워크 오류");
   }
 }
 

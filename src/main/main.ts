@@ -37,6 +37,7 @@ const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** 캡처 직전 preview 창을 숨겨 화면에 찍히지 않게 한다. 이전에 보였는지 반환. */
 async function hidePreviewForCapture(): Promise<boolean> {
+  hideZoomWin(); // 확대 창도 캡처에 안 찍히게 숨긴다
   const wasVisible = !!(preview && !preview.isDestroyed() && preview.isVisible());
   if (wasVisible) {
     preview!.hide();
@@ -168,6 +169,84 @@ async function openQuickPaste() {
   quickWin?.webContents.send("quick:show", store.list());
 }
 
+/* ===== 확대 미리보기 창 =====
+   패널 안 요소로 그리면 패널 창(360×520) 밖으로 못 나가 작게 보인다.
+   → 별도 투명 창으로 띄워 화면의 최대 70%까지 크게 보여준다. 마우스는 무시(순수 오버레이). */
+let zoomWin: BrowserWindow | null = null;
+
+/** 로컬 API의 원본 이미지 URL(GIF는 애니메이션 유지). 토큰 포함. */
+function zoomImageUrl(it: { fileUrl?: string; thumbnailUrl: string }): string {
+  const c = loadConfig();
+  const rel = it.fileUrl || it.thumbnailUrl;
+  if (!rel) return "";
+  return `http://127.0.0.1:${c.port}${rel}?token=${encodeURIComponent(c.token)}`;
+}
+
+function ensureZoomWin() {
+  if (zoomWin && !zoomWin.isDestroyed()) return;
+  zoomWin = new BrowserWindow({
+    width: 400,
+    height: 300,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    skipTaskbar: true,
+    focusable: false, // 포커스를 뺏지 않는다(패널 hover 유지)
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/zoom-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  zoomWin.setAlwaysOnTop(true, "pop-up-menu");
+  zoomWin.setIgnoreMouseEvents(true); // 클릭 통과 — 순수 미리보기
+  zoomWin.setContentProtection(true); // 캡처에 안 찍히게
+  zoomWin.loadFile(path.join(__dirname, "../renderer/zoom.html"));
+  zoomWin.on("closed", () => {
+    zoomWin = null;
+  });
+}
+
+function hideZoomWin() {
+  if (zoomWin && !zoomWin.isDestroyed() && zoomWin.isVisible()) zoomWin.hide();
+}
+
+/** 확대 창을 이미지 비율대로 크게(화면 70% 상한) 잡고, 패널 옆에 배치한다. */
+function showZoomWin(id: string, anchor: { x: number; y: number; w: number; h: number }) {
+  if (!preview || preview.isDestroyed()) return;
+  const it = store.list().find((x) => x.id === id);
+  if (!it) return;
+  const url = zoomImageUrl(it);
+  if (!url) return;
+
+  ensureZoomWin();
+  const pb = preview.getBounds();
+  const wa = screen.getDisplayNearestPoint({ x: pb.x, y: pb.y }).workArea;
+  const iw = it.width && it.width > 0 ? it.width : 800;
+  const ih = it.height && it.height > 0 ? it.height : 600;
+  const PAD = 12; // 테두리·그림자 여백
+  const maxW = wa.width * 0.52;
+  const maxH = wa.height * 0.52;
+  const scale = Math.min(maxW / iw, maxH / ih, 1.5); // 작은 캡처도 최대 1.5배까지 확대
+  const winW = Math.round(iw * scale) + PAD * 2;
+  const winH = Math.round(ih * scale) + PAD * 2;
+
+  // 패널 왼쪽에 우선 배치(패널이 보통 우하단). 자리 없으면 오른쪽.
+  let x = pb.x - winW - 10;
+  if (x < wa.x + 6) x = pb.x + pb.width + 10;
+  x = Math.max(wa.x + 6, Math.min(x, wa.x + wa.width - winW - 6));
+  // 세로: 앵커(썸네일) 중앙에 맞춤 → 화면 안으로 클램프.
+  const anchorMidY = pb.y + anchor.y + anchor.h / 2;
+  let y = Math.round(anchorMidY - winH / 2);
+  y = Math.max(wa.y + 6, Math.min(y, wa.y + wa.height - winH - 6));
+
+  zoomWin!.setBounds({ x, y, width: winW, height: winH });
+  zoomWin!.webContents.send("zoom:img", { url, isGif: it.kind === "gif" });
+  zoomWin!.showInactive(); // 포커스 없이 표시
+}
+
 /* ===== 녹화(GIF) ===== */
 /** recorder 상태 변화 훅 — 녹화 중엔 preview를 숨겨 GIF에 안 찍히게, 끝나면 다시 표시. */
 function setRecordingUi(recording: boolean) {
@@ -238,7 +317,10 @@ function ensurePreview() {
   preview.on("moved", savePos);
   preview.on("resized", saveSize);
   // 안전장치: 설정 중 창이 숨겨져도 전역 단축키가 죽은 채 남지 않게 재등록(멱등).
-  preview.on("hide", () => registerHotkeys());
+  preview.on("hide", () => {
+    registerHotkeys();
+    hideZoomWin(); // 패널이 숨으면 확대 창도 닫는다
+  });
   preview.on("closed", () => {
     preview = null;
     registerHotkeys();
@@ -511,6 +593,9 @@ function registerIpc() {
     const c = loadConfig();
     return { port: c.port, token: c.token };
   });
+  // 확대 미리보기 창(패널 밖 별도 창).
+  ipcMain.on("zoom:show", (_e, id: string, anchor: { x: number; y: number; w: number; h: number }) => showZoomWin(id, anchor));
+  ipcMain.on("zoom:hide", () => hideZoomWin());
   // store 변경 시 preview 갱신
   store.on("change", () => {
     if (preview && !preview.isDestroyed()) preview.webContents.send("captures", store.list());

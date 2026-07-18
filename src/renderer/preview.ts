@@ -16,6 +16,8 @@ interface Bc {
   remove: (id: string) => Promise<boolean>;
   copy: (id: string) => Promise<boolean>;
   copyFiles: (ids: string[]) => Promise<boolean>;
+  showZoom: (id: string, anchor: { x: number; y: number; w: number; h: number }) => void;
+  hideZoom: () => void;
   edit: (id: string) => Promise<void>;
   capture: (kind: "full" | "region" | "fixed") => Promise<void>;
   record: (kind: "full" | "region") => Promise<void>;
@@ -139,14 +141,11 @@ declare const bc: Bc;
     paintHead();
   }
 
-  /* ===== 확대 미리보기 팝오버 =====
-     썸네일 2초 hover 또는 "이미 선택된 항목 재클릭" 시 원본을 근처에 띄운다.
-     배경은 덮지 않으므로(모달 아님) 마우스가 썸네일·팝오버 밖으로 나가면 닫는다. */
-  const HOVER_DELAY = 2000;
-  const zoomEl = document.getElementById("zoom") as HTMLElement;
-  const zoomImg = document.getElementById("zoom-img") as HTMLImageElement;
-  const zoomErr = document.getElementById("zoom-err") as HTMLElement;
-  let zoomId: string | null = null;
+  /* ===== 확대 미리보기 =====
+     썸네일 1초 hover 또는 "이미 선택된 항목 재클릭" 시 원본을 별도 창으로 크게 띄운다.
+     (패널 안에 그리면 창 밖으로 못 나가 작게 보이므로 main이 별도 창으로 표시.) */
+  const HOVER_DELAY = 800;
+  let zoomId: string | null = null; // 현재 확대 중인 캡처 id(없으면 null)
   let hoverId: string | null = null;
   let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -160,56 +159,20 @@ declare const bc: Bc;
     hoverId = null;
     if (!zoomId) return;
     zoomId = null;
-    zoomEl.classList.remove("show");
-    zoomEl.classList.add("hidden");
-    zoomImg.removeAttribute("src"); // GIF 디코딩 중단
-  }
-
-  /** 팝오버를 썸네일 근처에 놓되 창 밖으로 잘리지 않게 보정. */
-  function placeZoom(anchor: HTMLElement) {
-    const M = 8; // 창 가장자리 여백
-    const a = anchor.getBoundingClientRect();
-    const z = zoomEl.getBoundingClientRect();
-    // 가로: 썸네일 중앙 정렬 → 창 안으로 클램프.
-    let left = a.left + a.width / 2 - z.width / 2;
-    left = Math.max(M, Math.min(left, window.innerWidth - z.width - M));
-    // 세로: 아래 우선, 공간 없으면 위, 둘 다 부족하면 클램프.
-    let top: number;
-    if (a.bottom + 10 + z.height + M <= window.innerHeight) top = a.bottom + 10;
-    else if (a.top - 10 - z.height >= M) top = a.top - 10 - z.height;
-    else top = Math.max(M, Math.min(a.top, window.innerHeight - z.height - M));
-    zoomEl.style.left = `${Math.round(left)}px`;
-    zoomEl.style.top = `${Math.round(top)}px`;
+    bc.hideZoom();
   }
 
   function showZoom(id: string) {
-    const it = items.find((x) => x.id === id);
     const anchor = listEl.querySelector(`.item[data-id="${id}"] .thumb`) as HTMLElement | null;
-    if (!it || !anchor) return;
+    if (!anchor) return;
     clearHoverTimer();
     zoomId = id;
-    // GIF는 원본 파일이라 팝오버에서도 움직인다. 이미지도 원본(fileUrl)이 있으면 원본을 쓴다.
-    const src = base ? `${base}${it.fileUrl || it.thumbnailUrl}?token=${encodeURIComponent(token)}` : "";
-    zoomErr.classList.add("hidden");
-    zoomImg.classList.remove("hidden");
-    zoomEl.classList.remove("hidden");
-    zoomEl.classList.remove("show");
-    zoomImg.onload = () => {
-      if (zoomId !== id) return;
-      placeZoom(anchor);
-      zoomEl.classList.add("show");
-    };
-    zoomImg.onerror = () => {
-      if (zoomId !== id) return;
-      zoomImg.classList.add("hidden"); // 이미지 대신 짧은 에러 문구만.
-      zoomErr.classList.remove("hidden");
-      placeZoom(anchor);
-      zoomEl.classList.add("show");
-    };
-    zoomImg.src = src;
+    const r = anchor.getBoundingClientRect();
+    // 창 좌표계 기준 앵커 위치 → main이 패널 위치를 더해 화면 좌표로 환산.
+    bc.showZoom(id, { x: r.left, y: r.top, w: r.width, h: r.height });
   }
 
-  // hover 2초 → 표시. 다른 썸네일로 이동하면 이전 타이머는 취소.
+  // hover 1초 → 표시. 다른 썸네일로 이동하면 이전 타이머는 취소.
   listEl.addEventListener("mouseover", (e) => {
     const thumb = (e.target as HTMLElement).closest(".thumb") as HTMLElement | null;
     const item = thumb?.closest(".item") as HTMLElement | null;
@@ -218,15 +181,13 @@ declare const bc: Bc;
     if (id === hoverId) return;
     clearHoverTimer();
     hoverId = id;
-    if (zoomId && zoomId !== id) hideZoom(); // 다른 항목으로 이동 → 기존 팝오버 닫기
+    if (zoomId && zoomId !== id) hideZoom(); // 다른 항목으로 이동 → 기존 확대 닫기
     hoverTimer = setTimeout(() => showZoom(id), HOVER_DELAY);
   });
 
-  // 마우스가 썸네일·팝오버 밖으로 나가면 닫기(팝오버 위에선 유지 → 닫기 버튼 클릭 가능).
+  // 마우스가 목록 항목 밖으로 나가면 닫기(확대 창은 마우스를 무시하므로 안전).
   document.addEventListener("mouseover", (e) => {
-    const t = e.target as HTMLElement;
-    if (zoomEl.contains(t)) return;
-    const item = t.closest(".item") as HTMLElement | null;
+    const item = (e.target as HTMLElement).closest(".item") as HTMLElement | null;
     const overId = item?.getAttribute("data-id") ?? null;
     if (!overId) {
       clearHoverTimer();
@@ -235,10 +196,6 @@ declare const bc: Bc;
     if (zoomId && overId !== zoomId) hideZoom();
   });
 
-  document.getElementById("zoom-close")!.addEventListener("click", (e) => {
-    e.stopPropagation();
-    hideZoom();
-  });
   listEl.addEventListener("scroll", hideZoom); // 스크롤 시 닫기(앵커가 움직이므로)
   window.addEventListener("resize", hideZoom);
 

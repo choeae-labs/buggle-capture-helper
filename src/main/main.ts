@@ -542,7 +542,8 @@ function registerIpc() {
       } catch {
         /* 무시 */
       }
-      notify("자동 붙여넣기 실패(진단)", dbg.slice(0, 180));
+      // 사용자에겐 간단히 안내(원인 상세는 paste-debug.log).
+      notify("자동 붙여넣기 실패", "클립보드엔 복사됐어요 — ⌘V로 붙여넣기 하세요. (반복되면 손쉬운 사용 권한 확인)");
       if (!hasMacAccessibility(false)) hasMacAccessibility(true); // '손쉬운 사용' 권한창 유도
     }
     return pasted;

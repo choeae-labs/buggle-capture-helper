@@ -82,6 +82,22 @@ export function hasMacAccessibility(prompt = false): boolean {
   }
 }
 
+/** (mac) 대상 앱만 앞으로(포커스 복귀). 순차 다건 붙여넣기의 준비 단계. */
+export async function focusApp(target: string | null): Promise<boolean> {
+  if (process.platform !== "darwin" || !target || !/^[A-Za-z0-9.\-]+$/.test(target)) return false;
+  const r = await osa(`tell application id "${target}" to activate`);
+  if (r.err) lastPasteDebug = `[activate 실패] ${r.err}`;
+  return !r.err;
+}
+
+/** (mac) 지금 포커스된 앱에 ⌘V 한 번 전송. */
+export async function pressPasteKey(): Promise<boolean> {
+  if (process.platform !== "darwin") return false;
+  const r = await osa('tell application "System Events" to keystroke "v" using command down\nreturn "ok"');
+  if (!r.out.endsWith("ok")) lastPasteDebug = `[keystroke 실패] ${r.err || "무응답"}`;
+  return r.out.endsWith("ok");
+}
+
 /**
  * 저장해둔 창/앱으로 포커스를 되돌린 뒤 붙여넣기(Ctrl+V / ⌘V)를 보낸다.
  *

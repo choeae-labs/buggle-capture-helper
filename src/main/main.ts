@@ -3,12 +3,12 @@ import path from "node:path";
 import fs from "node:fs";
 import { execFile } from "node:child_process";
 import electronUpdater from "electron-updater";
-import { loadConfig, saveConfig, type Hotkeys } from "./config";
+import { dataDir, loadConfig, saveConfig, type Hotkeys } from "./config";
 import { store } from "./store";
 import { startServer, stopServer } from "./server";
 import { captureFullScreen, captureRegion, captureFixed, setFixedRegion } from "./capture";
 import { initRecorder, isRecording, registerRecorderIpc, startRecording, stopRecording } from "./recorder";
-import { focusAndPaste, getForegroundWindow, hasMacAccessibility } from "./win-paste";
+import { focusAndPaste, getForegroundWindow, getLastPasteDebug, hasMacAccessibility } from "./win-paste";
 
 // 숨은/화면 밖 인코더 창의 비디오 프레임이 멈추지 않도록 백그라운드 throttling·occlusion 비활성화.
 app.commandLine.appendSwitch("disable-background-timer-throttling");
@@ -512,10 +512,16 @@ function registerIpc() {
     for (const id of ids) store.markUsed(id); // 붙여넣은 캡처는 "첨부됨"으로
     // 실패해도 클립보드엔 남아 있으므로 사용자가 직접 Ctrl+V(⌘V) 하면 된다.
     const pasted = await focusAndPaste(target);
-    // macOS: 접근성 권한이 없어 자동 붙여넣기가 안 되면 최초 1회 안내(권한창 열기). 복사는 이미 됐음.
-    if (!pasted && process.platform === "darwin" && !hasMacAccessibility(false)) {
-      hasMacAccessibility(true); // '손쉬운 사용' 설정을 띄워 권한 요청
-      notify("붙여넣기 권한 필요", "시스템 설정 > 손쉬운 사용에서 buggle Capture를 허용하면 자동으로 붙습니다. 지금은 ⌘V로 붙여넣기 하세요.");
+    // macOS: 실패 시 원인 진단을 알림+로그로 남긴다(실측용). 복사는 이미 됐으니 ⌘V로는 붙는다.
+    if (!pasted && process.platform === "darwin") {
+      const dbg = getLastPasteDebug() || `target=${target ?? "(없음)"} — 진단 없음`;
+      try {
+        fs.appendFileSync(path.join(dataDir(), "paste-debug.log"), `${new Date().toISOString()} ${dbg}\n`);
+      } catch {
+        /* 무시 */
+      }
+      notify("자동 붙여넣기 실패(진단)", dbg.slice(0, 180));
+      if (!hasMacAccessibility(false)) hasMacAccessibility(true); // '손쉬운 사용' 권한창 유도
     }
     return pasted;
   });

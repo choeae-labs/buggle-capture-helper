@@ -29,6 +29,8 @@ export interface Hotkeys {
   fixed: string;
   setFixed: string;
   record: string;
+  /** 어느 앱에서든 캡처를 골라 그 자리에 붙여넣기(전역). */
+  pastePicker: string;
 }
 
 /** GIF 녹화 프리셋(용량/화질 균형). 설정에서 변경 가능. */
@@ -69,6 +71,7 @@ const DEFAULTS: AppConfig = {
     fixed: "CommandOrControl+Shift+3",
     setFixed: "CommandOrControl+Shift+0",
     record: "CommandOrControl+Shift+4",
+    pastePicker: "CommandOrControl+Shift+V",
   },
   recording: { fps: 10, maxSeconds: 20, maxWidth: 960 },
   fixedRegion: null,

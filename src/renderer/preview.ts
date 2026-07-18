@@ -9,13 +9,15 @@ interface CaptureItem {
   width?: number;
   height?: number;
 }
-type HotkeyMap = { fullScreen: string; region: string; fixed: string; setFixed: string; record: string };
+type HotkeyMap = { fullScreen: string; region: string; fixed: string; setFixed: string; record: string; pastePicker: string };
 interface Bc {
   list: () => Promise<CaptureItem[]>;
   conn: () => Promise<{ port: number; token: string }>;
   remove: (id: string) => Promise<boolean>;
   copy: (id: string) => Promise<boolean>;
   copyFiles: (ids: string[]) => Promise<boolean>;
+  showZoom: (id: string, anchor: { x: number; y: number; w: number; h: number }) => void;
+  hideZoom: () => void;
   edit: (id: string) => Promise<void>;
   capture: (kind: "full" | "region" | "fixed") => Promise<void>;
   record: (kind: "full" | "region") => Promise<void>;
@@ -57,19 +59,25 @@ declare const bc: Bc;
   /** 플랫폼: Mac이면 단축키 표기를 ⌘/⇧ 심볼로. */
   const IS_MAC = navigator.platform.toUpperCase().includes("MAC");
   const PRIME = IS_MAC ? "⌘" : "Ctrl+"; // 주 수식키 표기(복사/붙여넣기 안내용)
-
-  /** 하단 안내에 짧은 상태 메시지를 잠깐 표시. */
-  let tipTimer: ReturnType<typeof setTimeout> | null = null;
   if (IS_MAC) tipEl.innerHTML = "<b>⌘클릭</b> 다중선택 · <b>⌘C</b> 복사 · <b>Del</b> 삭제";
-  const tipDefault = tipEl.innerHTML;
-  function restoreTip() {
-    if (selected.size > 1) tipEl.textContent = `${selected.size}장 선택됨 · ${PRIME}C 복사 · Del 삭제`;
-    else tipEl.innerHTML = tipDefault;
+
+  /** 토스트 — 짧은 상태 메시지(디자인: 하단 중앙 알약). */
+  const toastEl = document.getElementById("toast") as HTMLElement;
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  function showToast(msg: string) {
+    toastEl.textContent = msg;
+    toastEl.classList.remove("hidden");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.add("hidden"), 1800);
   }
-  function flashTip(msg: string) {
-    tipEl.textContent = msg;
-    if (tipTimer) clearTimeout(tipTimer);
-    tipTimer = setTimeout(restoreTip, 1200);
+
+  const headEl = document.querySelector(".list-head .lh") as HTMLElement;
+  const selectAllBtn = document.getElementById("selectAll") as HTMLButtonElement;
+  /** 목록 헤더·전체선택 라벨을 선택 상태에 맞게 갱신. */
+  function paintHead() {
+    headEl.textContent = selected.size > 0 ? `캡처 도우미 · ${selected.size}장 선택됨` : "캡처 도우미 · 첨부할 항목 선택";
+    const allSel = items.length > 0 && selected.size === items.length;
+    selectAllBtn.textContent = allSel ? "전체 해제" : "전체 선택";
   }
 
   /** 선택 표시만 갱신(재렌더 없이). */
@@ -77,11 +85,12 @@ declare const bc: Bc;
     for (const el of Array.from(listEl.querySelectorAll(".item"))) {
       el.classList.toggle("selected", selected.has(el.getAttribute("data-id") || ""));
     }
-    restoreTip();
+    paintHead();
   }
 
   function render(next: CaptureItem[]) {
     items = next; // 전체 표시(스크롤). 이전 캡처도 아래로 스크롤해 볼 수 있음.
+    hideZoom(); // 목록을 다시 그리면 팝오버 기준(썸네일 DOM)이 사라지므로 닫는다.
     // 사라진 항목은 선택에서 제거.
     for (const id of Array.from(selected)) {
       if (!items.some((it) => it.id === id)) selected.delete(id);
@@ -99,8 +108,8 @@ declare const bc: Bc;
     }
     prevIds = new Set(items.map((it) => it.id));
     if (items.length === 0) {
-      listEl.innerHTML = `<div id="empty">아직 캡처가 없어요.<br/>단축키로 캡처해보세요.</div>`;
-      restoreTip();
+      listEl.innerHTML = `<div id="empty">캡처한 항목이 없습니다.<br/>단축키를 눌러 화면을 캡처해 보세요.</div>`;
+      paintHead();
       return;
     }
     listEl.innerHTML = "";
@@ -112,22 +121,83 @@ declare const bc: Bc;
       const srcUrl = it.kind === "gif" && it.fileUrl ? it.fileUrl : it.thumbnailUrl;
       const thumb = base ? `${base}${srcUrl}?token=${encodeURIComponent(token)}` : "";
       wrap.innerHTML = `
-        <span class="check">✓</span>
-        ${it.kind === "gif" ? `<span class="gifbadge">GIF</span>` : ""}
-        <img src="${thumb}" alt="" />
-        <div class="meta">
-          <span class="time">${timeAgo(it.createdAt)}${it.width ? ` · ${it.width}×${it.height}` : ""}</span>
+        <div class="thumb">
+          <img src="${thumb}" alt="" />
+          ${it.kind === "gif" ? `<span class="gifbadge">GIF</span>` : ""}
+          <span class="check"></span>
+          ${it.width ? `<span class="dims">${it.width}×${it.height}</span>` : ""}
           ${it.usedAt ? `<span class="used">첨부됨</span>` : ""}
         </div>
-        <div class="acts">
-          ${it.kind !== "gif" ? `<button data-edit="${it.id}">편집</button>` : ""}
-          <button data-copy="${it.id}">복사</button>
-          <button data-del="${it.id}">삭제</button>
+        <div class="meta">
+          <span class="time">${timeAgo(it.createdAt)}</span>
+          <span class="acts">
+            ${it.kind !== "gif" ? `<button data-edit="${it.id}">편집</button>` : ""}
+            <button data-copy="${it.id}">복사</button>
+            <button data-del="${it.id}">삭제</button>
+          </span>
         </div>`;
       listEl.appendChild(wrap);
     }
-    restoreTip();
+    paintHead();
   }
+
+  /* ===== 확대 미리보기 =====
+     썸네일 1초 hover 또는 "이미 선택된 항목 재클릭" 시 원본을 별도 창으로 크게 띄운다.
+     (패널 안에 그리면 창 밖으로 못 나가 작게 보이므로 main이 별도 창으로 표시.) */
+  const HOVER_DELAY = 800;
+  let zoomId: string | null = null; // 현재 확대 중인 캡처 id(없으면 null)
+  let hoverId: string | null = null;
+  let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearHoverTimer() {
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
+
+  function hideZoom() {
+    clearHoverTimer();
+    hoverId = null;
+    if (!zoomId) return;
+    zoomId = null;
+    bc.hideZoom();
+  }
+
+  function showZoom(id: string) {
+    const anchor = listEl.querySelector(`.item[data-id="${id}"] .thumb`) as HTMLElement | null;
+    if (!anchor) return;
+    clearHoverTimer();
+    zoomId = id;
+    const r = anchor.getBoundingClientRect();
+    // 창 좌표계 기준 앵커 위치 → main이 패널 위치를 더해 화면 좌표로 환산.
+    bc.showZoom(id, { x: r.left, y: r.top, w: r.width, h: r.height });
+  }
+
+  // hover 1초 → 표시. 다른 썸네일로 이동하면 이전 타이머는 취소.
+  listEl.addEventListener("mouseover", (e) => {
+    const thumb = (e.target as HTMLElement).closest(".thumb") as HTMLElement | null;
+    const item = thumb?.closest(".item") as HTMLElement | null;
+    const id = item?.getAttribute("data-id") ?? null;
+    if (!id) return;
+    if (id === hoverId) return;
+    clearHoverTimer();
+    hoverId = id;
+    if (zoomId && zoomId !== id) hideZoom(); // 다른 항목으로 이동 → 기존 확대 닫기
+    hoverTimer = setTimeout(() => showZoom(id), HOVER_DELAY);
+  });
+
+  // 마우스가 목록 항목 밖으로 나가면 닫기(확대 창은 마우스를 무시하므로 안전).
+  document.addEventListener("mouseover", (e) => {
+    const item = (e.target as HTMLElement).closest(".item") as HTMLElement | null;
+    const overId = item?.getAttribute("data-id") ?? null;
+    if (!overId) {
+      clearHoverTimer();
+      hoverId = null;
+    }
+    if (zoomId && overId !== zoomId) hideZoom();
+  });
+
+  listEl.addEventListener("scroll", hideZoom); // 스크롤 시 닫기(앵커가 움직이므로)
+  window.addEventListener("resize", hideZoom);
 
   /** 클릭 방식에 따라 선택 갱신. plain=단일, ctrl=토글, shift=범위. */
   function selectClick(id: string, e: MouseEvent) {
@@ -157,18 +227,74 @@ declare const bc: Bc;
     if (ids.length > 1) {
       // 여러 장 → 파일 목록으로 복사(브라우저에 Ctrl+V 시 여러 장 붙여넣기, GIF 애니메이션 유지).
       const ok = await bc.copyFiles(ids);
-      flashTip(ok ? `${ids.length}장 복사됨 · ${PRIME}V로 붙여넣기` : "복사 실패");
+      showToast(ok ? `${ids.length}장 복사됨 · ${PRIME}V로 붙여넣기` : "복사 실패");
     } else {
       const ok = await bc.copy(ids[0]); // 1장 → 비트맵(어디에나 이미지로 붙게).
-      flashTip(ok ? "복사됨" : "복사 실패");
+      showToast(ok ? "복사됨" : "복사 실패");
     }
   }
   async function deleteSelected() {
     const ids = items.map((it) => it.id).filter((id) => selected.has(id));
     if (ids.length === 0) return;
     for (const id of ids) await bc.remove(id); // store 변경 → onCaptures로 재렌더
-    flashTip(`${ids.length}장 삭제됨`);
+    showToast(`${ids.length}장 삭제됨`);
   }
+
+  // 전체 선택 / 전체 해제 토글.
+  selectAllBtn.addEventListener("click", () => {
+    const allSel = items.length > 0 && selected.size === items.length;
+    selected.clear();
+    if (!allSel) for (const it of items) selected.add(it.id);
+    anchorId = items[0]?.id ?? null;
+    paintSelection();
+  });
+
+  // window.confirm 대체: 패널 안에 디자인된 확인 대화상자를 띄우고 선택을 기다린다.
+  const confirmEl = document.getElementById("confirm") as HTMLElement;
+  function askConfirm(msg: string, sub: string, yesLabel: string): Promise<boolean> {
+    document.getElementById("cf-msg")!.textContent = msg;
+    document.getElementById("cf-sub")!.textContent = sub;
+    const yes = document.getElementById("cf-yes") as HTMLButtonElement;
+    const no = document.getElementById("cf-no") as HTMLButtonElement;
+    yes.textContent = yesLabel;
+    confirmEl.classList.remove("hidden");
+    yes.focus();
+    return new Promise<boolean>((resolve) => {
+      const done = (v: boolean) => {
+        confirmEl.classList.add("hidden");
+        yes.removeEventListener("click", onYes);
+        no.removeEventListener("click", onNo);
+        confirmEl.removeEventListener("mousedown", onBack);
+        window.removeEventListener("keydown", onKey, true);
+        resolve(v);
+      };
+      const onYes = () => done(true);
+      const onNo = () => done(false);
+      // 바깥(배경) 클릭 = 취소.
+      const onBack = (e: MouseEvent) => {
+        if (e.target === confirmEl) done(false);
+      };
+      // 대화상자가 뜬 동안엔 목록 단축키(Del/Ctrl+C)가 먹지 않도록 캡처 단계에서 가로챈다.
+      const onKey = (e: KeyboardEvent) => {
+        e.stopPropagation();
+        if (e.key === "Escape") { e.preventDefault(); done(false); }
+        else if (e.key === "Enter") { e.preventDefault(); done(true); }
+      };
+      yes.addEventListener("click", onYes);
+      no.addEventListener("click", onNo);
+      confirmEl.addEventListener("mousedown", onBack);
+      window.addEventListener("keydown", onKey, true);
+    });
+  }
+
+  // 전체 삭제(확인 후) — store의 clearAll로 저장 공간까지 정리.
+  document.getElementById("clearAll")!.addEventListener("click", async () => {
+    if (items.length === 0) return;
+    const ok = await askConfirm(`캡처 ${items.length}장을 모두 삭제할까요?`, "삭제하면 되돌릴 수 없습니다.", "전체 삭제");
+    if (!ok) return;
+    const n = await bc.clearAll();
+    showToast(`${n}장 삭제됨`);
+  });
 
   listEl.addEventListener("click", async (e) => {
     const t = e.target as HTMLElement;
@@ -191,13 +317,30 @@ declare const bc: Bc;
     }
     // 그 외 영역 클릭 → 선택(수식키 반영).
     const item = t.closest(".item") as HTMLElement | null;
-    if (item) selectClick(item.getAttribute("data-id")!, e);
+    if (!item) return;
+    const id = item.getAttribute("data-id")!;
+    const plain = !e.ctrlKey && !e.metaKey && !e.shiftKey;
+    const wasSelected = selected.has(id);
+    selectClick(id, e); // 기존 선택 동작은 그대로 유지
+    if (plain && wasSelected) {
+      // 이미 선택된 항목 재클릭 → 딜레이 없이 확대 미리보기 토글.
+      if (zoomId === id) hideZoom();
+      else showZoom(id);
+    } else if (zoomId && zoomId !== id) {
+      hideZoom(); // 다른 이미지 클릭 → 닫기
+    }
   });
 
   // 키보드: Ctrl/⌘+C 복사, Delete/Backspace 삭제(창이 포커스됐을 때 = 클릭 후).
   window.addEventListener("keydown", (e) => {
-    // 설정 패널이 열려 있으면 목록 단축키 무시.
+    // 설정 패널·확인 대화상자가 열려 있으면 목록 단축키 무시.
     if (!document.getElementById("settings")!.classList.contains("hidden")) return;
+    if (!document.getElementById("confirm")!.classList.contains("hidden")) return;
+    if (e.key === "Escape" && zoomId) {
+      e.preventDefault(); // 확대 미리보기가 떠 있으면 Esc는 그것부터 닫는다.
+      hideZoom();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
       e.preventDefault();
       void copySelected();
@@ -243,10 +386,11 @@ declare const bc: Bc;
   const collapseBtn = document.getElementById("collapse") as HTMLButtonElement;
   collapseBtn.addEventListener("click", () => {
     collapsed = !collapsed;
-    listEl.classList.toggle("hidden", collapsed);
-    document.querySelector(".caps-wrap")!.classList.toggle("hidden", collapsed);
-    tipEl.classList.toggle("hidden", collapsed);
-    collapseBtn.textContent = collapsed ? "▸" : "▾";
+    // 헤더만 남기고 본문 전체를 숨긴다(창 크기도 main에서 헤더 높이로 축소).
+    for (const sel of ["#list", ".caps-wrap", ".list-head", "footer.tip-bar"]) {
+      document.querySelector(sel)!.classList.toggle("hidden", collapsed);
+    }
+    collapseBtn.classList.toggle("collapsed", collapsed); // 아이콘 회전(SVG 유지)
     bc.collapse(collapsed); // 창 자체를 헤더만 남기고 최소화/복원
   });
 
@@ -265,6 +409,7 @@ declare const bc: Bc;
     { key: "fixed", label: "고정된 사각 영역 캡처하기" },
     { key: "setFixed", label: "고정 영역 다시 지정하기" },
     { key: "record", label: "화면 녹화하기 (GIF)" },
+    { key: "pastePicker", label: "캡처 골라 붙여넣기 (어디서나)" },
   ];
 
   // KeyboardEvent.code → Electron accelerator 키 이름("" = 등록 불가 키).
@@ -469,17 +614,6 @@ declare const bc: Bc;
   document.getElementById("settings-open")!.addEventListener("click", openSettings);
   document.getElementById("settings-close")!.addEventListener("click", closeSettings);
   document.getElementById("set-cancel")!.addEventListener("click", closeSettings);
-  async function doClearAll() {
-    if (items.length === 0) {
-      flashTip("삭제할 캡처가 없어요");
-      return;
-    }
-    if (!confirm("저장된 캡처를 모두 삭제할까요? 되돌릴 수 없습니다.")) return;
-    const n = await bc.clearAll();
-    flashTip(`${n}개 전체 삭제됨`);
-  }
-  document.getElementById("set-clearall")!.addEventListener("click", doClearAll); // 설정 패널
-  document.getElementById("clearall-btn")!.addEventListener("click", doClearAll); // 하단 바
   document.getElementById("set-save")!.addEventListener("click", async () => {
     commitHkRecording(); // 녹화 중이면 후보를 먼저 확정
     const next: Partial<HotkeyMap> = {};
@@ -497,7 +631,19 @@ declare const bc: Bc;
     });
     refreshTooltips(); // 바뀐 단축키를 툴팁에 반영
     closeSettings();
-    flashTip("설정 저장됨");
+    showToast("설정 저장됨");
+  });
+
+  // 설정 패널의 "전체 삭제" — 확인 후 clearAll.
+  document.getElementById("set-clearall")!.addEventListener("click", async () => {
+    if (items.length === 0) {
+      showToast("삭제할 캡처가 없어요");
+      return;
+    }
+    const ok = await askConfirm(`캡처 ${items.length}장을 모두 삭제할까요?`, "삭제하면 되돌릴 수 없습니다.", "전체 삭제");
+    if (!ok) return;
+    const n = await bc.clearAll();
+    showToast(`${n}장 삭제됨`);
   });
 
   // 트레이 아이콘 = Buggle 로고. SVG를 PNG로 래스터화해 main에 전달(트레이는 래스터만 지원).

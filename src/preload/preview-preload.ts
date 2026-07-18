@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld("bc", {
   remove: (id: string) => ipcRenderer.invoke("preview:delete", id),
   copy: (id: string) => ipcRenderer.invoke("preview:copy", id),
   copyFiles: (ids: string[]) => ipcRenderer.invoke("preview:copyFiles", ids),
+  showZoom: (id: string, anchor: { x: number; y: number; w: number; h: number }) => ipcRenderer.send("zoom:show", id, anchor),
+  hideZoom: () => ipcRenderer.send("zoom:hide"),
   edit: (id: string) => ipcRenderer.invoke("preview:edit", id),
   capture: (kind: "full" | "region" | "fixed") => ipcRenderer.invoke("preview:capture", kind),
   record: (kind: "full" | "region") => ipcRenderer.invoke("preview:record", kind),

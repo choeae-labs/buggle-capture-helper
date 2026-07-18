@@ -3,24 +3,27 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      html, body { margin: 0; height: 100%; font: 12px/1 system-ui, "Malgun Gothic", sans-serif; background: transparent; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: transparent;
+        font: 12px/1 "Pretendard", -apple-system, system-ui, "Malgun Gothic", sans-serif; -webkit-font-smoothing: antialiased; }
       #bar {
         display: flex; align-items: center; gap: 8px; height: 100%;
-        padding: 0 10px; box-sizing: border-box;
-        background: rgba(20, 22, 30, 0.94); color: #fff;
+        padding: 0 10px;
+        background: #101c86; color: #fff;
         border-radius: 23px; border: 1px solid rgba(255,255,255,0.12);
-        box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+        box-shadow: 0 8px 24px rgba(8,12,60,0.5);
       }
-      .dot { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; animation: blink 1s steps(2, start) infinite; }
+      .dot { width: 10px; height: 10px; border-radius: 50%; background: #e0532e; animation: blink 1s steps(2, start) infinite; }
       @keyframes blink { 50% { opacity: 0.25; } }
-      .label { font-weight: 600; }
-      .time { color: #cbd5e1; font-variant-numeric: tabular-nums; }
+      .label { font-weight: 700; }
+      .time { color: #cfd6f7; font-variant-numeric: tabular-nums; }
       .spacer { flex: 1; }
       #stop {
-        background: #ef4444; color: #fff; border: none; border-radius: 14px;
-        padding: 5px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
+        background: #e0532e; color: #fff; border: none; border-radius: 14px;
+        padding: 5px 12px; font-size: 11px; font-weight: 700; cursor: pointer;
+        box-shadow: 0 4px 12px -2px rgba(224,83,46,0.5);
       }
-      #stop:hover { background: #dc2626; }
+      #stop:hover { background: #ef6a44; }
     </style>
   </head>
   <body>

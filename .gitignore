@@ -3,3 +3,6 @@ dist/
 release/
 *.log
 .DS_Store
+
+# 디자인 참고(리포에 포함 안 함)
+Buggle 캡처 프로그램 리디자인/

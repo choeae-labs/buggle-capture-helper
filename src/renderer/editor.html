@@ -3,35 +3,70 @@
   <head>
     <meta charset="utf-8" />
     <title>buggle 캡처 편집</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+    <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" rel="stylesheet" />
     <style>
-      html, body { margin: 0; height: 100%; background: #0f131b; color: #e6e9ef; font: 13px/1.4 system-ui, "Malgun Gothic", sans-serif; overflow: hidden; }
+      /* buggle 캡처 편집 — 딥블루/오렌지 팔레트 */
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #16249c; color: #e8ecff; overflow: hidden;
+        font: 13px/1.4 "Pretendard", -apple-system, system-ui, "Malgun Gothic", sans-serif; -webkit-font-smoothing: antialiased; }
       #bar {
         display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-        padding: 8px 10px; background: #171b24; border-bottom: 1px solid rgba(255,255,255,0.08);
+        padding: 8px 10px; background: #101c86; border-bottom: 1px solid rgba(255,255,255,0.06);
       }
       #bar .div { width: 1px; height: 22px; background: rgba(255,255,255,0.14); margin: 0 4px; }
       #bar .grow { flex: 1; }
       .tb {
-        min-width: 34px; height: 30px; padding: 0 8px; border-radius: 6px; cursor: pointer; font-size: 13px;
-        background: rgba(255,255,255,0.07); color: #e6e9ef; border: 1px solid transparent;
+        min-width: 34px; height: 30px; padding: 0 8px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600;
+        background: #22349f; color: #c3cbf3; border: 1px solid rgba(255,255,255,0.07); transition: all 0.15s ease;
       }
-      .tb:hover { background: rgba(255,255,255,0.14); }
-      .tb.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+      .tb:hover { background: rgba(255,255,255,0.14); color: #fff; }
+      .tb.active { background: #e0532e; border-color: #e0532e; color: #fff; box-shadow: 0 6px 16px -4px rgba(224,83,46,0.5); }
       .tb:disabled { opacity: 0.4; cursor: default; }
       .colors { display: flex; gap: 5px; }
       .sw { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(255,255,255,0.25); }
       .sw.active { border-color: #fff; }
-      .ctx { display: inline-flex; align-items: center; gap: 4px; color: #c3c9d4; font-size: 12px; }
-      .ctx input[type="number"] { width: 52px; height: 26px; background: #0f131b; color: #e6e9ef; border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; padding: 0 6px; }
+      .ctx { display: inline-flex; align-items: center; gap: 4px; color: #aeb8ee; font-size: 12px; }
+      .ctx input[type="number"] { width: 52px; height: 26px; background: #16249c; color: #fff; border: 1px solid rgba(255,255,255,0.18); border-radius: 6px; padding: 0 6px; }
       .ctx label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
-      .btn { height: 30px; padding: 0 12px; border-radius: 6px; cursor: pointer; font-size: 13px; background: rgba(255,255,255,0.08); color: #e6e9ef; border: 1px solid rgba(255,255,255,0.18); }
-      .btn:hover { background: rgba(255,255,255,0.16); }
-      .btn.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
-      .btn.done { background: #10b981; border-color: #10b981; color: #fff; }
+      .btn { height: 30px; padding: 0 12px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600;
+        background: rgba(255,255,255,0.08); color: #cfd6f7; border: 1px solid rgba(255,255,255,0.14); }
+      .btn:hover { background: rgba(255,255,255,0.16); color: #fff; }
+      .btn.primary { background: #3a52cc; border-color: #3a52cc; color: #fff; }
+      .btn.primary:hover { background: #4964dd; }
+      .btn.done { background: #e0532e; border-color: #e0532e; color: #fff; box-shadow: 0 8px 20px -6px rgba(224,83,46,0.55); }
+      .btn.done:hover { background: #ef6a44; }
       .btn:disabled { opacity: 0.5; cursor: default; }
-      #stage { position: absolute; top: 47px; left: 0; right: 0; bottom: 30px; overflow: auto; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
-      .canvas-container { box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
-      #hint { position: absolute; left: 0; right: 0; bottom: 0; height: 30px; line-height: 30px; padding: 0 12px; font-size: 11px; color: #8b93a1; background: #171b24; border-top: 1px solid rgba(255,255,255,0.06); }
+      #stage { position: absolute; top: 47px; left: 0; right: 0; bottom: 30px; overflow: auto; display: flex; align-items: center; justify-content: center; padding: 16px; }
+      #stage::-webkit-scrollbar { width: 8px; height: 8px; }
+      #stage::-webkit-scrollbar-thumb { background: #3a52cc; border-radius: 8px; }
+      .canvas-container { box-shadow: 0 16px 40px rgba(8,12,60,0.55); border-radius: 4px; }
+      #hint { position: absolute; left: 0; right: 0; bottom: 0; height: 30px; line-height: 30px; padding: 0 12px; font-size: 11px; color: #8b98e0; background: #101c86; border-top: 1px solid rgba(255,255,255,0.06); }
+
+      /* 확인 대화상자 (window.confirm 대체) */
+      .hidden { display: none !important; }
+      @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes popin { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+      #confirm {
+        position: fixed; inset: 0; z-index: 100; background: rgba(8,12,60,0.62); backdrop-filter: blur(3px);
+        display: flex; align-items: center; justify-content: center; padding: 20px; animation: fadein 0.14s ease;
+      }
+      #confirm .box {
+        width: 100%; max-width: 320px; background: #22349f; border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 14px; padding: 18px 18px 14px; box-shadow: 0 20px 50px rgba(8,12,60,0.6); animation: popin 0.16s ease;
+      }
+      #confirm .ico {
+        width: 38px; height: 38px; border-radius: 50%; margin: 0 auto 11px; display: flex; align-items: center;
+        justify-content: center; background: rgba(224,83,46,0.18); color: #f5a68e;
+      }
+      #confirm .msg { font-size: 13px; font-weight: 600; color: #fff; text-align: center; line-height: 1.55; }
+      #confirm .sub { font-size: 11px; color: #9aa6e8; text-align: center; margin-top: 5px; line-height: 1.5; }
+      #confirm .btns { display: flex; gap: 7px; margin-top: 16px; }
+      #confirm .btns button { flex: 1; height: 34px; border: 0; border-radius: 9px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+      #confirm #cf-no { background: rgba(255,255,255,0.08); color: #cfd6f7; }
+      #confirm #cf-no:hover { background: rgba(255,255,255,0.16); color: #fff; }
+      #confirm #cf-yes { background: #e0532e; color: #fff; box-shadow: 0 8px 20px -6px rgba(224,83,46,0.55); }
+      #confirm #cf-yes:hover { background: #ef6a44; }
     </style>
   </head>
   <body>
@@ -65,6 +100,21 @@
     </div>
     <div id="stage"><canvas id="c"></canvas></div>
     <div id="hint"></div>
+
+    <!-- 확인 대화상자 -->
+    <div id="confirm" class="hidden">
+      <div class="box">
+        <div class="ico">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 9v5M12 17.5v.5"/><path d="M10.3 4.3 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z"/></svg>
+        </div>
+        <div class="msg" id="cf-msg"></div>
+        <div class="sub" id="cf-sub"></div>
+        <div class="btns">
+          <button id="cf-no">계속 편집</button>
+          <button id="cf-yes">저장 안 함</button>
+        </div>
+      </div>
+    </div>
     <script src="./editor.js"></script>
   </body>
 </html>

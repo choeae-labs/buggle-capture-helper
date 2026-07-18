@@ -8,6 +8,7 @@ import { store } from "./store";
 import { startServer, stopServer } from "./server";
 import { captureFullScreen, captureRegion, captureFixed, setFixedRegion } from "./capture";
 import { initRecorder, isRecording, registerRecorderIpc, startRecording, stopRecording } from "./recorder";
+import { focusAndPaste, getForegroundWindow, hasMacAccessibility } from "./win-paste";
 
 // 숨은/화면 밖 인코더 창의 비디오 프레임이 멈추지 않도록 백그라운드 throttling·occlusion 비활성화.
 app.commandLine.appendSwitch("disable-background-timer-throttling");
@@ -19,7 +20,7 @@ let preview: BrowserWindow | null = null;
 let editor: BrowserWindow | null = null;
 let editorTargetId: string | null = null;
 
-const PREVIEW_HEADER_H = 46; // 접었을 때 남길 헤더 높이
+const PREVIEW_HEADER_H = 42; // 접었을 때 남길 헤더 높이
 let previewCollapsed = false;
 let previewExpandedHeight = 560; // 펼친 상태 높이(복원용)
 
@@ -36,6 +37,7 @@ const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** 캡처 직전 preview 창을 숨겨 화면에 찍히지 않게 한다. 이전에 보였는지 반환. */
 async function hidePreviewForCapture(): Promise<boolean> {
+  hideZoomWin(); // 확대 창도 캡처에 안 찍히게 숨긴다
   const wasVisible = !!(preview && !preview.isDestroyed() && preview.isVisible());
   if (wasVisible) {
     preview!.hide();
@@ -93,6 +95,158 @@ function flashPreview() {
   preview?.webContents.send("captures", store.list());
 }
 
+/* ===== 전역 붙여넣기(어느 앱에서든 Ctrl+Shift+V) =====
+   메인 패널이 아니라, 커서 옆에 캡처 썸네일만 쭉 늘어놓는 가벼운 창을 띄운다
+   (윈도우 Win+V 클립보드 기록과 같은 결). 고르면 그 자리에 바로 붙는다. */
+let quickWin: BrowserWindow | null = null;
+// 창을 열기 직전에 쓰던 창. 붙여넣기 후 여기로 포커스를 되돌린다.
+let quickPasteTarget: string | null = null;
+
+const QUICK_W = 620;
+const QUICK_H = 168;
+
+function ensureQuickWin() {
+  if (quickWin && !quickWin.isDestroyed()) return;
+  quickWin = new BrowserWindow({
+    width: QUICK_W,
+    height: QUICK_H,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/quickpaste-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  quickWin.setAlwaysOnTop(true, "pop-up-menu"); // 다른 앱 위에 확실히 뜨도록
+  quickWin.setContentProtection(true); // 캡처에 이 창이 찍히지 않게
+  quickWin.loadFile(path.join(__dirname, "../renderer/quickpaste.html"));
+  // 다른 곳을 클릭하면(포커스 상실) 조용히 닫는다 — 고르기 창이므로 눌러붙어 있으면 방해된다.
+  quickWin.on("blur", () => hideQuickWin());
+  quickWin.on("closed", () => {
+    quickWin = null;
+  });
+}
+
+function hideQuickWin() {
+  quickPasteTarget = null;
+  if (quickWin && !quickWin.isDestroyed() && quickWin.isVisible()) quickWin.hide();
+}
+
+/** 커서가 있는 화면 안쪽, 커서 바로 아래에 놓는다(다중 모니터 대응). */
+function placeQuickWin() {
+  if (!quickWin || quickWin.isDestroyed()) return;
+  const pt = screen.getCursorScreenPoint();
+  const wa = screen.getDisplayNearestPoint(pt).workArea;
+  const x = Math.max(wa.x + 8, Math.min(pt.x - QUICK_W / 2, wa.x + wa.width - QUICK_W - 8));
+  // 아래에 자리가 없으면 커서 위로 띄운다.
+  const below = pt.y + 18;
+  const y = below + QUICK_H + 8 <= wa.y + wa.height ? below : Math.max(wa.y + 8, pt.y - QUICK_H - 18);
+  quickWin.setPosition(Math.round(x), Math.round(y));
+}
+
+/**
+ * 전역 단축키 → 캡처 선택 창.
+ *
+ * 포커스를 뺏기 "전에" 대상 창을 기록해야 나중에 그리로 돌아가 붙여넣을 수 있다.
+ */
+async function openQuickPaste() {
+  if (isRecording()) return; // 녹화 중엔 띄우지 않는다(GIF에 찍힘)
+  if (quickWin && !quickWin.isDestroyed() && quickWin.isVisible()) {
+    hideQuickWin(); // 같은 단축키를 다시 누르면 닫기(토글)
+    return;
+  }
+  const target = await getForegroundWindow();
+  ensureQuickWin();
+  quickPasteTarget = target;
+  placeQuickWin();
+  quickWin?.show();
+  quickWin?.focus();
+  quickWin?.webContents.send("quick:show", store.list());
+}
+
+/* ===== 확대 미리보기 창 =====
+   패널 안 요소로 그리면 패널 창(360×520) 밖으로 못 나가 작게 보인다.
+   → 별도 투명 창으로 띄워 화면의 최대 70%까지 크게 보여준다. 마우스는 무시(순수 오버레이). */
+let zoomWin: BrowserWindow | null = null;
+
+/** 로컬 API의 원본 이미지 URL(GIF는 애니메이션 유지). 토큰 포함. */
+function zoomImageUrl(it: { fileUrl?: string; thumbnailUrl: string }): string {
+  const c = loadConfig();
+  const rel = it.fileUrl || it.thumbnailUrl;
+  if (!rel) return "";
+  return `http://127.0.0.1:${c.port}${rel}?token=${encodeURIComponent(c.token)}`;
+}
+
+function ensureZoomWin() {
+  if (zoomWin && !zoomWin.isDestroyed()) return;
+  zoomWin = new BrowserWindow({
+    width: 400,
+    height: 300,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    skipTaskbar: true,
+    focusable: false, // 포커스를 뺏지 않는다(패널 hover 유지)
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/zoom-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  zoomWin.setAlwaysOnTop(true, "pop-up-menu");
+  zoomWin.setIgnoreMouseEvents(true); // 클릭 통과 — 순수 미리보기
+  zoomWin.setContentProtection(true); // 캡처에 안 찍히게
+  zoomWin.loadFile(path.join(__dirname, "../renderer/zoom.html"));
+  zoomWin.on("closed", () => {
+    zoomWin = null;
+  });
+}
+
+function hideZoomWin() {
+  if (zoomWin && !zoomWin.isDestroyed() && zoomWin.isVisible()) zoomWin.hide();
+}
+
+/** 확대 창을 이미지 비율대로 크게(화면 70% 상한) 잡고, 패널 옆에 배치한다. */
+function showZoomWin(id: string, anchor: { x: number; y: number; w: number; h: number }) {
+  if (!preview || preview.isDestroyed()) return;
+  const it = store.list().find((x) => x.id === id);
+  if (!it) return;
+  const url = zoomImageUrl(it);
+  if (!url) return;
+
+  ensureZoomWin();
+  const pb = preview.getBounds();
+  const wa = screen.getDisplayNearestPoint({ x: pb.x, y: pb.y }).workArea;
+  const iw = it.width && it.width > 0 ? it.width : 800;
+  const ih = it.height && it.height > 0 ? it.height : 600;
+  const PAD = 12; // 테두리·그림자 여백
+  const maxW = wa.width * 0.52;
+  const maxH = wa.height * 0.52;
+  const scale = Math.min(maxW / iw, maxH / ih, 1.5); // 작은 캡처도 최대 1.5배까지 확대
+  const winW = Math.round(iw * scale) + PAD * 2;
+  const winH = Math.round(ih * scale) + PAD * 2;
+
+  // 패널 왼쪽에 우선 배치(패널이 보통 우하단). 자리 없으면 오른쪽.
+  let x = pb.x - winW - 10;
+  if (x < wa.x + 6) x = pb.x + pb.width + 10;
+  x = Math.max(wa.x + 6, Math.min(x, wa.x + wa.width - winW - 6));
+  // 세로: 앵커(썸네일) 중앙에 맞춤 → 화면 안으로 클램프.
+  const anchorMidY = pb.y + anchor.y + anchor.h / 2;
+  let y = Math.round(anchorMidY - winH / 2);
+  y = Math.max(wa.y + 6, Math.min(y, wa.y + wa.height - winH - 6));
+
+  zoomWin!.setBounds({ x, y, width: winW, height: winH });
+  zoomWin!.webContents.send("zoom:img", { url, isGif: it.kind === "gif" });
+  zoomWin!.showInactive(); // 포커스 없이 표시
+}
+
 /* ===== 녹화(GIF) ===== */
 /** recorder 상태 변화 훅 — 녹화 중엔 preview를 숨겨 GIF에 안 찍히게, 끝나면 다시 표시. */
 function setRecordingUi(recording: boolean) {
@@ -117,8 +271,8 @@ function ensurePreview() {
   if (preview && !preview.isDestroyed()) return;
   const cfg = loadConfig();
   const primary = screen.getPrimaryDisplay().workArea;
-  const width = cfg.preview.w ?? 300;
-  const height = cfg.preview.h ?? 560;
+  const width = cfg.preview.w ?? 360;
+  const height = cfg.preview.h ?? 520;
   previewExpandedHeight = height;
   const x = cfg.preview.x ?? primary.x + primary.width - width - 24;
   const y = cfg.preview.y ?? primary.y + primary.height - height - 24;
@@ -128,8 +282,8 @@ function ensurePreview() {
     y,
     width,
     height,
-    minWidth: 240,
-    minHeight: 220,
+    minWidth: 320,
+    minHeight: 200,
     frame: false,
     transparent: true,
     resizable: true,
@@ -163,7 +317,10 @@ function ensurePreview() {
   preview.on("moved", savePos);
   preview.on("resized", saveSize);
   // 안전장치: 설정 중 창이 숨겨져도 전역 단축키가 죽은 채 남지 않게 재등록(멱등).
-  preview.on("hide", () => registerHotkeys());
+  preview.on("hide", () => {
+    registerHotkeys();
+    hideZoomWin(); // 패널이 숨으면 확대 창도 닫는다
+  });
   preview.on("closed", () => {
     preview = null;
     registerHotkeys();
@@ -224,6 +381,7 @@ function registerHotkeys() {
     [hotkeys.fixed, () => runCapture("fixed")],
     [hotkeys.setFixed, () => runCapture("setFixed")],
     [hotkeys.record, () => runRecord("full")],
+    [hotkeys.pastePicker, () => void openQuickPaste()],
   ];
   for (const [accel, fn] of map) {
     if (!accel) continue; // "없음"(빈 문자열) → 등록 안 함
@@ -265,7 +423,12 @@ function updateTrayMenu() {
       },
     },
     { type: "separator" },
-    { label: `API 포트: ${cfg.port}`, enabled: false },
+    // 업데이트 — 다운로드 완료 시 즉시 적용 메뉴 노출(상주 앱이라 '종료 시 설치'만으론 적용 기회가 없음).
+    ...(updateReadyVersion
+      ? [{ label: `⬆ 업데이트 적용하고 재시작 (v${updateReadyVersion})`, click: () => applyUpdateNow() }]
+      : [{ label: "업데이트 확인", click: () => void manualCheckForUpdates() }]),
+    { type: "separator" },
+    { label: `API 포트: ${cfg.port} · v${app.getVersion()}`, enabled: false },
     { label: "종료", click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
@@ -281,49 +444,80 @@ function buildTray() {
 }
 
 /* ===== IPC (preview 렌더러 ↔ main) ===== */
+/** 1장 → 비트맵으로 클립보드에(어떤 앱에나 이미지로 붙는다). */
+function copyOne(id: string): boolean {
+  const fp = store.filePath(id);
+  if (!fp) return false;
+  let img = nativeImage.createFromPath(fp);
+  // GIF 등은 createFromPath가 빈 이미지를 줄 수 있음 → 썸네일(PNG)로 폴백.
+  if (img.isEmpty()) {
+    const tp = store.thumbPath(id);
+    if (tp) img = nativeImage.createFromPath(tp);
+  }
+  if (img.isEmpty()) return false;
+  clipboard.writeImage(img);
+  return true;
+}
+
+/** 여러 장 → 파일 목록(CF_HDROP)으로 클립보드에. 브라우저 Ctrl+V 시 여러 File로 전달됨(GIF 애니메이션 유지). */
+async function copyMany(ids: string[]): Promise<boolean> {
+  const paths = ids.map((id) => store.filePath(id)).filter((p): p is string => !!p && fs.existsSync(p));
+  if (paths.length === 0) return false;
+  if (process.platform === "win32") {
+    // PowerShell Set-Clipboard -LiteralPath (경로의 홑따옴표는 '' 로 escape).
+    const quoted = paths.map((p) => `'${p.replace(/'/g, "''")}'`).join(",");
+    return await new Promise<boolean>((resolve) => {
+      execFile(
+        "powershell",
+        ["-NoProfile", "-NonInteractive", "-Command", `Set-Clipboard -LiteralPath ${quoted}`],
+        (err) => {
+          if (err) console.warn("[copyFiles] Set-Clipboard 실패:", err.message);
+          resolve(!err);
+        },
+      );
+    });
+  }
+  // macOS 등: NSPasteboard는 여러 파일을 브라우저 붙여넣기(DataTransfer.files)로 넘겨주지 못한다.
+  // 첫 이미지만 비트맵으로 클립보드에 담는 폴백(단일 붙여넣기). 여러 장은 웹 캡처 피커로 유도한다.
+  const first = nativeImage.createFromPath(paths[0]);
+  if (!first.isEmpty()) {
+    clipboard.writeImage(first);
+    return true;
+  }
+  return false;
+}
+
+/** 선택분을 클립보드에 담는다. 1장이면 비트맵(어디에나), 여러 장이면 파일 목록. */
+function copySelection(ids: string[]): Promise<boolean> {
+  return ids.length > 1 ? copyMany(ids) : Promise.resolve(copyOne(ids[0]));
+}
+
 function registerIpc() {
   ipcMain.handle("preview:list", () => store.list());
   ipcMain.handle("preview:delete", (_e, id: string) => store.remove(id));
-  ipcMain.handle("preview:copy", (_e, id: string) => {
-    const fp = store.filePath(id);
-    if (!fp) return false;
-    let img = nativeImage.createFromPath(fp);
-    // GIF 등은 createFromPath가 빈 이미지를 줄 수 있음 → 썸네일(PNG)로 폴백.
-    if (img.isEmpty()) {
-      const tp = store.thumbPath(id);
-      if (tp) img = nativeImage.createFromPath(tp);
+  ipcMain.handle("preview:copy", (_e, id: string) => copyOne(id));
+  ipcMain.handle("preview:copyFiles", (_e, ids: string[]) => copyMany(ids));
+  // 빠른 붙여넣기 창.
+  ipcMain.handle("quick:list", () => store.list());
+  ipcMain.on("quick:cancel", () => hideQuickWin());
+  // 클립보드에 담고 → 창을 숨긴 뒤 → 직전 창으로 돌아가 Ctrl+V를 대신 눌러준다.
+  ipcMain.handle("quick:paste", async (_e, ids: string[]) => {
+    if (ids.length === 0) return false;
+    const copied = await copySelection(ids);
+    if (!copied) return false;
+    const target = quickPasteTarget;
+    quickPasteTarget = null;
+    // 우리 창이 앞에 있으면 대상 창으로 포커스가 안 돌아간다 → 먼저 숨긴다.
+    if (quickWin && !quickWin.isDestroyed()) quickWin.hide();
+    for (const id of ids) store.markUsed(id); // 붙여넣은 캡처는 "첨부됨"으로
+    // 실패해도 클립보드엔 남아 있으므로 사용자가 직접 Ctrl+V(⌘V) 하면 된다.
+    const pasted = await focusAndPaste(target);
+    // macOS: 접근성 권한이 없어 자동 붙여넣기가 안 되면 최초 1회 안내(권한창 열기). 복사는 이미 됐음.
+    if (!pasted && process.platform === "darwin" && !hasMacAccessibility(false)) {
+      hasMacAccessibility(true); // '손쉬운 사용' 설정을 띄워 권한 요청
+      notify("붙여넣기 권한 필요", "시스템 설정 > 손쉬운 사용에서 buggle Capture를 허용하면 자동으로 붙습니다. 지금은 ⌘V로 붙여넣기 하세요.");
     }
-    if (img.isEmpty()) return false;
-    clipboard.writeImage(img);
-    return true;
-  });
-  // 여러 장 → 파일 목록(CF_HDROP)으로 클립보드에 복사. 브라우저에 Ctrl+V 시 여러 File로 전달됨(GIF 애니메이션 유지).
-  ipcMain.handle("preview:copyFiles", async (_e, ids: string[]) => {
-    const paths = ids.map((id) => store.filePath(id)).filter((p): p is string => !!p && fs.existsSync(p));
-    if (paths.length === 0) return false;
-    if (process.platform === "win32") {
-      // Windows: CF_HDROP(파일 목록)로 클립보드에 담아 브라우저 Ctrl+V 시 여러 File로 붙는다.
-      // PowerShell Set-Clipboard -LiteralPath (경로의 홑따옴표는 '' 로 escape).
-      const quoted = paths.map((p) => `'${p.replace(/'/g, "''")}'`).join(",");
-      return await new Promise<boolean>((resolve) => {
-        execFile(
-          "powershell",
-          ["-NoProfile", "-NonInteractive", "-Command", `Set-Clipboard -LiteralPath ${quoted}`],
-          (err) => {
-            if (err) console.warn("[copyFiles] Set-Clipboard 실패:", err.message);
-            resolve(!err);
-          },
-        );
-      });
-    }
-    // macOS 등: NSPasteboard는 여러 파일을 브라우저 붙여넣기(DataTransfer.files)로 넘겨주지 못한다.
-    // 첫 이미지만 비트맵으로 클립보드에 담는 폴백(단일 붙여넣기). 여러 장은 웹 캡처 피커로 유도한다.
-    const first = nativeImage.createFromPath(paths[0]);
-    if (!first.isEmpty()) {
-      clipboard.writeImage(first);
-      return true;
-    }
-    return false;
+    return pasted;
   });
   ipcMain.handle("preview:capture", (_e, kind: "full" | "region" | "fixed") => runCapture(kind));
   ipcMain.handle("preview:record", (_e, kind: "full" | "region") => runRecord(kind === "region" ? "region" : "full"));
@@ -405,6 +599,9 @@ function registerIpc() {
     const c = loadConfig();
     return { port: c.port, token: c.token };
   });
+  // 확대 미리보기 창(패널 밖 별도 창).
+  ipcMain.on("zoom:show", (_e, id: string, anchor: { x: number; y: number; w: number; h: number }) => showZoomWin(id, anchor));
+  ipcMain.on("zoom:hide", () => hideZoomWin());
   // store 변경 시 preview 갱신
   store.on("change", () => {
     if (preview && !preview.isDestroyed()) preview.webContents.send("captures", store.list());
@@ -420,22 +617,61 @@ function protocolUrlFromArgv(argv: string[]): string | null {
 }
 
 /** 자동 업데이트 — 설치 빌드에서만. 새 버전을 조용히 받아 다음 종료/재시작 시 적용. */
-function checkForUpdates() {
-  if (!app.isPackaged) return; // dev 제외
+/** 상주 앱이라 시작 시 1회 확인만으론 새 버전을 영영 못 본다 → 주기적으로 재확인. */
+const UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2시간
+let updateReadyVersion: string | null = null; // 다운로드 완료된 새 버전(트레이 '적용' 메뉴용)
+
+/** 자동 업데이트 지원 여부(설치 빌드 + Windows). */
+function canAutoUpdate(): boolean {
   // macOS는 Developer ID 코드서명 없이는 electron-updater(Squirrel.Mac)가 서명 검증에서 실패한다.
   // 서명 붙이기 전까지 mac은 자동업데이트를 끄고 Homebrew(brew upgrade)로 갱신한다.
-  if (process.platform === "darwin") return;
+  return app.isPackaged && process.platform !== "darwin";
+}
+
+function checkForUpdates() {
+  if (!canAutoUpdate()) return;
   try {
     const { autoUpdater } = electronUpdater;
     autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.autoInstallOnAppQuit = true; // 종료 시에도 적용(트레이에서 즉시 적용도 가능)
     autoUpdater.on("update-downloaded", (info) => {
-      notify("업데이트 준비됨", `새 버전 ${info.version} — 앱을 다시 시작하면 적용돼요.`);
+      updateReadyVersion = info.version;
+      updateTrayMenu(); // 트레이에 "업데이트 적용하고 재시작" 노출
+      notify("업데이트 준비됨", `새 버전 ${info.version} — 트레이 메뉴의 '업데이트 적용하고 재시작'으로 바로 적용할 수 있어요.`);
     });
     autoUpdater.on("error", (e) => console.warn("[updater] 오류:", e?.message ?? e));
-    void autoUpdater.checkForUpdates();
+    const run = () => void autoUpdater.checkForUpdates().catch((e) => console.warn("[updater] 확인 실패:", e?.message ?? e));
+    run(); // 시작 시 1회
+    setInterval(run, UPDATE_CHECK_INTERVAL_MS); // 이후 주기적으로
   } catch (e) {
     console.warn("[updater] 초기화 실패:", e);
+  }
+}
+
+/** 다운로드된 업데이트를 즉시 적용(앱 종료 후 설치·재시작). */
+function applyUpdateNow() {
+  try {
+    electronUpdater.autoUpdater.quitAndInstall();
+  } catch (e) {
+    console.warn("[updater] 적용 실패:", e);
+    notify("업데이트 적용 실패", (e as Error)?.message ?? "알 수 없는 오류");
+  }
+}
+
+/** 트레이 '업데이트 확인' — 사용자가 직접 확인하고 결과를 알림으로 받는다. */
+async function manualCheckForUpdates() {
+  if (!app.isPackaged) return notify("업데이트 확인", "개발 모드에선 지원하지 않아요.");
+  if (process.platform === "darwin") return notify("업데이트 확인", "macOS는 brew upgrade로 갱신해주세요.");
+  if (updateReadyVersion) {
+    return notify("업데이트 준비됨", `새 버전 ${updateReadyVersion} — 트레이의 '업데이트 적용하고 재시작'을 눌러주세요.`);
+  }
+  try {
+    const r = await electronUpdater.autoUpdater.checkForUpdates();
+    const v = r?.updateInfo?.version;
+    if (v && v !== app.getVersion()) notify("업데이트 발견", `새 버전 ${v} — 내려받는 중이에요.`);
+    else notify("업데이트 확인", `최신 버전입니다 (v${app.getVersion()}).`);
+  } catch (e) {
+    notify("업데이트 확인 실패", (e as Error)?.message ?? "네트워크 오류");
   }
 }
 

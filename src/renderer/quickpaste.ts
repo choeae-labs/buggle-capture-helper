@@ -19,6 +19,13 @@ declare const qp: Qp;
 (function () {
   const stripEl = document.getElementById("strip") as HTMLElement;
   const titleEl = document.getElementById("title") as HTMLElement;
+
+  // Mac은 안내 표기를 ⌘로(kbd의 "Ctrl" → "⌘").
+  if (navigator.platform.toUpperCase().includes("MAC")) {
+    document.querySelectorAll("kbd").forEach((k) => {
+      if (k.textContent) k.textContent = k.textContent.replace("Ctrl", "⌘");
+    });
+  }
   let base = "";
   let token = "";
   let items: QpItem[] = [];

@@ -22,14 +22,21 @@ function ps(script: string, timeout = 4000): Promise<string> {
   });
 }
 
-/** osascript 실행(짧은 스크립트 전용). 실패해도 던지지 않고 stdout만 돌려준다. */
-function osa(script: string, timeout = 5000): Promise<string> {
+/** osascript 실행(짧은 스크립트 전용). 실패해도 던지지 않고 stdout/stderr를 그대로 돌려준다(디버그용). */
+function osa(script: string, timeout = 5000): Promise<{ out: string; err: string }> {
   return new Promise((resolve) => {
-    execFile("osascript", ["-e", script], { timeout }, (err, stdout) => {
-      if (err) console.warn("[mac-paste] osascript 실패:", err.message);
-      resolve((stdout || "").trim());
+    execFile("osascript", ["-e", script], { timeout }, (err, stdout, stderr) => {
+      const errText = [(stderr || "").trim(), err ? err.message : ""].filter(Boolean).join(" | ");
+      if (errText) console.warn("[mac-paste] osascript:", errText);
+      resolve({ out: (stdout || "").trim(), err: errText });
     });
   });
+}
+
+/** 마지막 자동 붙여넣기 시도의 진단 문자열(실패 원인 실측용). */
+let lastPasteDebug = "";
+export function getLastPasteDebug(): string {
+  return lastPasteDebug;
 }
 
 const WIN32_SIG = `
@@ -53,10 +60,14 @@ export async function getForegroundWindow(): Promise<string | null> {
   }
   if (process.platform === "darwin") {
     // 우리 팝업이 뜨기 '전'에 호출됨 → 지금 맨 앞 앱의 bundle id를 저장(복귀용).
-    const id = await osa(
+    const r = await osa(
       'tell application "System Events" to get bundle identifier of first application process whose frontmost is true',
     );
-    return /^[A-Za-z0-9.\-]+$/.test(id) ? id : null;
+    if (!/^[A-Za-z0-9.\-]+$/.test(r.out)) {
+      lastPasteDebug = `[대상식별 실패] out=${r.out || "(없음)"} err=${r.err || "(없음)"}`;
+      return null;
+    }
+    return r.out;
   }
   return null;
 }
@@ -69,6 +80,22 @@ export function hasMacAccessibility(prompt = false): boolean {
   } catch {
     return false;
   }
+}
+
+/** (mac) 대상 앱만 앞으로(포커스 복귀). 순차 다건 붙여넣기의 준비 단계. */
+export async function focusApp(target: string | null): Promise<boolean> {
+  if (process.platform !== "darwin" || !target || !/^[A-Za-z0-9.\-]+$/.test(target)) return false;
+  const r = await osa(`tell application id "${target}" to activate`);
+  if (r.err) lastPasteDebug = `[activate 실패] ${r.err}`;
+  return !r.err;
+}
+
+/** (mac) 지금 포커스된 앱에 ⌘V 한 번 전송. */
+export async function pressPasteKey(): Promise<boolean> {
+  if (process.platform !== "darwin") return false;
+  const r = await osa('tell application "System Events" to keystroke "v" using command down\nreturn "ok"');
+  if (!r.out.endsWith("ok")) lastPasteDebug = `[keystroke 실패] ${r.err || "무응답"}`;
+  return r.out.endsWith("ok");
 }
 
 /**
@@ -94,16 +121,21 @@ Add-Type -AssemblyName System.Windows.Forms
     return out.endsWith("ok");
   }
   if (process.platform === "darwin") {
-    if (!/^[A-Za-z0-9.\-]+$/.test(target)) return false; // bundle id 형식 방어(osascript 삽입 차단)
-    // 접근성 권한이 없으면 keystroke가 무시된다 → false 반환(사용자가 직접 ⌘V). 권한 안내는 호출부에서.
-    if (!hasMacAccessibility(false)) return false;
-    const out = await osa(`
-tell application id "${target}" to activate
-delay 0.15
-tell application "System Events" to keystroke "v" using command down
-return "ok"
-`);
-    return out.endsWith("ok");
+    if (!/^[A-Za-z0-9.\-]+$/.test(target)) {
+      lastPasteDebug = `[형식오류] target=${target}`;
+      return false; // bundle id 형식 방어(osascript 삽입 차단)
+    }
+    // 진단을 위해 권한이 없어 보여도 일단 시도 — 실제 실패 지점·에러문을 기록한다.
+    // (isTrustedAccessibilityClient가 실상과 다르게 보고되는 케이스가 있고,
+    //  keystroke는 접근성 외에 자동화(AppleEvents, "System Events 제어") 권한도 별도로 필요하다.)
+    const ax = hasMacAccessibility(false);
+    const act = await osa(`tell application id "${target}" to activate`);
+    const key = await osa('tell application "System Events" to keystroke "v" using command down\nreturn "ok"');
+    lastPasteDebug =
+      `target=${target} 접근성=${ax ? "있음" : "없음"}` +
+      ` | activate: ${act.err ? "실패(" + act.err + ")" : "OK"}` +
+      ` | keystroke: ${key.out.endsWith("ok") ? "OK" : "실패(" + (key.err || "무응답") + ")"}`;
+    return key.out.endsWith("ok");
   }
   return false;
 }

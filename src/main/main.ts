@@ -3,12 +3,12 @@ import path from "node:path";
 import fs from "node:fs";
 import { execFile } from "node:child_process";
 import electronUpdater from "electron-updater";
-import { loadConfig, saveConfig, type Hotkeys } from "./config";
+import { dataDir, loadConfig, saveConfig, type Hotkeys } from "./config";
 import { store } from "./store";
 import { startServer, stopServer } from "./server";
 import { captureFullScreen, captureRegion, captureFixed, setFixedRegion } from "./capture";
 import { initRecorder, isRecording, registerRecorderIpc, startRecording, stopRecording } from "./recorder";
-import { focusAndPaste, getForegroundWindow, hasMacAccessibility } from "./win-paste";
+import { focusAndPaste, focusApp, getForegroundWindow, getLastPasteDebug, hasMacAccessibility, pressPasteKey } from "./win-paste";
 
 // 숨은/화면 밖 인코더 창의 비디오 프레임이 멈추지 않도록 백그라운드 throttling·occlusion 비활성화.
 app.commandLine.appendSwitch("disable-background-timer-throttling");
@@ -503,19 +503,48 @@ function registerIpc() {
   // 클립보드에 담고 → 창을 숨긴 뒤 → 직전 창으로 돌아가 Ctrl+V를 대신 눌러준다.
   ipcMain.handle("quick:paste", async (_e, ids: string[]) => {
     if (ids.length === 0) return false;
-    const copied = await copySelection(ids);
-    if (!copied) return false;
     const target = quickPasteTarget;
     quickPasteTarget = null;
     // 우리 창이 앞에 있으면 대상 창으로 포커스가 안 돌아간다 → 먼저 숨긴다.
     if (quickWin && !quickWin.isDestroyed()) quickWin.hide();
+
+    let pasted = false;
+    if (process.platform === "darwin" && ids.length > 1) {
+      // macOS 클립보드는 다중 파일을 브라우저/입력창 붙여넣기로 전달하지 못한다(NSPasteboard 한계 —
+      // copyMany는 첫 장만 담김) → 대상 앱에 포커스를 준 뒤 '한 장 복사 → ⌘V'를 장수만큼 반복(순차 붙여넣기).
+      if (await focusApp(target)) {
+        await delay(250); // 포커스 전환 완료 대기
+        pasted = true;
+        for (const id of ids) {
+          if (!copyOne(id)) {
+            pasted = false;
+            continue; // 이 장은 건너뛰고 다음 장
+          }
+          if (!(await pressPasteKey())) {
+            pasted = false;
+            break; // 키 전송 자체가 막히면 중단(권한 문제)
+          }
+          await delay(350); // 대상 앱이 클립보드를 읽은 뒤 다음 장으로 교체
+        }
+      }
+    } else {
+      const copied = await copySelection(ids);
+      if (!copied) return false;
+      // 실패해도 클립보드엔 남아 있으므로 사용자가 직접 Ctrl+V(⌘V) 하면 된다.
+      pasted = await focusAndPaste(target);
+    }
     for (const id of ids) store.markUsed(id); // 붙여넣은 캡처는 "첨부됨"으로
-    // 실패해도 클립보드엔 남아 있으므로 사용자가 직접 Ctrl+V(⌘V) 하면 된다.
-    const pasted = await focusAndPaste(target);
-    // macOS: 접근성 권한이 없어 자동 붙여넣기가 안 되면 최초 1회 안내(권한창 열기). 복사는 이미 됐음.
-    if (!pasted && process.platform === "darwin" && !hasMacAccessibility(false)) {
-      hasMacAccessibility(true); // '손쉬운 사용' 설정을 띄워 권한 요청
-      notify("붙여넣기 권한 필요", "시스템 설정 > 손쉬운 사용에서 buggle Capture를 허용하면 자동으로 붙습니다. 지금은 ⌘V로 붙여넣기 하세요.");
+    // macOS: 실패 시 원인 진단을 알림+로그로 남긴다(실측용). 복사는 이미 됐으니 ⌘V로는 붙는다.
+    if (!pasted && process.platform === "darwin") {
+      const dbg = getLastPasteDebug() || `target=${target ?? "(없음)"} — 진단 없음`;
+      try {
+        fs.appendFileSync(path.join(dataDir(), "paste-debug.log"), `${new Date().toISOString()} ${dbg}\n`);
+      } catch {
+        /* 무시 */
+      }
+      // 사용자에겐 간단히 안내(원인 상세는 paste-debug.log).
+      notify("자동 붙여넣기 실패", "클립보드엔 복사됐어요 — ⌘V로 붙여넣기 하세요. (반복되면 손쉬운 사용 권한 확인)");
+      if (!hasMacAccessibility(false)) hasMacAccessibility(true); // '손쉬운 사용' 권한창 유도
     }
     return pasted;
   });

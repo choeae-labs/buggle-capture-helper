@@ -8,7 +8,7 @@ import { store } from "./store";
 import { startServer, stopServer } from "./server";
 import { captureFullScreen, captureRegion, captureFixed, setFixedRegion } from "./capture";
 import { initRecorder, isRecording, registerRecorderIpc, startRecording, stopRecording } from "./recorder";
-import { focusAndPaste, getForegroundWindow } from "./win-paste";
+import { focusAndPaste, getForegroundWindow, hasMacAccessibility } from "./win-paste";
 
 // 숨은/화면 밖 인코더 창의 비디오 프레임이 멈추지 않도록 백그라운드 throttling·occlusion 비활성화.
 app.commandLine.appendSwitch("disable-background-timer-throttling");
@@ -510,8 +510,14 @@ function registerIpc() {
     // 우리 창이 앞에 있으면 대상 창으로 포커스가 안 돌아간다 → 먼저 숨긴다.
     if (quickWin && !quickWin.isDestroyed()) quickWin.hide();
     for (const id of ids) store.markUsed(id); // 붙여넣은 캡처는 "첨부됨"으로
-    // 실패해도 클립보드엔 남아 있으므로 사용자가 직접 Ctrl+V 하면 된다.
-    return await focusAndPaste(target);
+    // 실패해도 클립보드엔 남아 있으므로 사용자가 직접 Ctrl+V(⌘V) 하면 된다.
+    const pasted = await focusAndPaste(target);
+    // macOS: 접근성 권한이 없어 자동 붙여넣기가 안 되면 최초 1회 안내(권한창 열기). 복사는 이미 됐음.
+    if (!pasted && process.platform === "darwin" && !hasMacAccessibility(false)) {
+      hasMacAccessibility(true); // '손쉬운 사용' 설정을 띄워 권한 요청
+      notify("붙여넣기 권한 필요", "시스템 설정 > 손쉬운 사용에서 buggle Capture를 허용하면 자동으로 붙습니다. 지금은 ⌘V로 붙여넣기 하세요.");
+    }
+    return pasted;
   });
   ipcMain.handle("preview:capture", (_e, kind: "full" | "region" | "fixed") => runCapture(kind));
   ipcMain.handle("preview:record", (_e, kind: "full" | "region") => runRecord(kind === "region" ? "region" : "full"));

@@ -8,6 +8,7 @@ const pairs = [
   ["src/renderer/recorder.html", "dist/renderer/recorder.html"],
   ["src/renderer/indicator.html", "dist/renderer/indicator.html"],
   ["src/renderer/editor.html", "dist/renderer/editor.html"],
+  ["src/renderer/quickpaste.html", "dist/renderer/quickpaste.html"],
 ];
 
 for (const [from, to] of pairs) {

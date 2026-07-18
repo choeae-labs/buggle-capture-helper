@@ -9,7 +9,7 @@
         height: 100%;
         overflow: hidden;
         cursor: crosshair;
-        background: rgba(0, 0, 0, 0.28);
+        background: rgba(12, 18, 90, 0.32);
         user-select: none;
       }
       #hint {
@@ -17,27 +17,31 @@
         top: 12px;
         left: 50%;
         transform: translateX(-50%);
-        background: rgba(0, 0, 0, 0.7);
+        background: #101c86;
         color: #fff;
-        font: 12px/1.4 system-ui, sans-serif;
-        padding: 6px 12px;
-        border-radius: 8px;
+        font: 12px/1.4 "Pretendard", -apple-system, system-ui, sans-serif;
+        font-weight: 600;
+        padding: 7px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 8px 24px rgba(8, 12, 60, 0.5);
       }
       #box {
         position: fixed;
         display: none;
-        border: 2px solid #3b82f6;
-        background: rgba(59, 130, 246, 0.12);
-        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.28);
+        border: 2px solid #e0532e;
+        background: rgba(224, 83, 46, 0.1);
+        box-shadow: 0 0 0 9999px rgba(12, 18, 90, 0.32);
       }
       #label {
         position: fixed;
         display: none;
-        background: #3b82f6;
+        background: #e0532e;
         color: #fff;
-        font: 11px/1.4 system-ui, sans-serif;
-        padding: 2px 6px;
-        border-radius: 4px;
+        font: 11px/1.4 "Pretendard", -apple-system, system-ui, sans-serif;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 999px;
         white-space: nowrap;
       }
     </style>

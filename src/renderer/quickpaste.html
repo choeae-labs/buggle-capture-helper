@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+    <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" rel="stylesheet" />
+    <style>
+      /* ===== 빠른 붙여넣기 — 커서 옆에 캡처만 쭉 늘어놓는 가벼운 선택창 ===== */
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
+        font-family: "Pretendard", -apple-system, system-ui, "Malgun Gothic", sans-serif; -webkit-font-smoothing: antialiased; }
+      .hidden { display: none !important; }
+
+      #bar {
+        display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+        background: #16249c; border: 1px solid rgba(255,255,255,0.14); border-radius: 12px;
+        box-shadow: 0 20px 50px rgba(8,12,60,0.55);
+      }
+
+      /* 얇은 머리말 — 드래그 손잡이 겸 안내 */
+      .head {
+        -webkit-app-region: drag; display: flex; align-items: center; gap: 7px;
+        padding: 7px 10px 6px; flex: none; color: #aeb8ee; font-size: 11px; font-weight: 600;
+      }
+      .head .dot { width: 12px; height: 12px; border-radius: 4px; background: #e0532e; flex: none; }
+      .head .grow { flex: 1; }
+      .head kbd {
+        -webkit-app-region: no-drag; font-family: inherit; font-size: 9.5px; font-weight: 800; color: #cfd6f7;
+        background: rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 5px;
+      }
+
+      /* 썸네일 가로 스트립 — 오래 쓸수록 늘어나므로 가로 스크롤 */
+      #strip {
+        flex: 1; min-height: 0; display: flex; gap: 8px; align-items: stretch;
+        overflow-x: auto; overflow-y: hidden; padding: 0 10px 8px;
+      }
+      #strip::-webkit-scrollbar { height: 7px; }
+      #strip::-webkit-scrollbar-thumb { background: #3a52cc; border-radius: 8px; }
+      #strip::-webkit-scrollbar-track { background: transparent; }
+
+      .cap {
+        position: relative; flex: none; width: 132px; height: 100%; padding: 4px; cursor: pointer;
+        background: #22349f; border: 2px solid rgba(255,255,255,0.1); border-radius: 9px; transition: all 0.1s ease;
+      }
+      .cap:hover { border-color: rgba(255,255,255,0.34); }
+      .cap.cursor { border-color: #8b98e0; }
+      .cap.sel { border-color: #e0532e; background: #2a3cae; }
+      .cap img {
+        display: block; width: 100%; height: 100%; object-fit: cover; object-position: top;
+        border-radius: 5px; background: #1b2a8f; pointer-events: none;
+      }
+      .cap .n {
+        position: absolute; top: 7px; right: 7px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px;
+        display: none; align-items: center; justify-content: center; font-size: 10px; font-weight: 800;
+        color: #fff; background: #e0532e; box-shadow: 0 2px 5px rgba(8,12,60,0.5);
+      }
+      .cap.sel .n { display: flex; }
+      .cap .gif {
+        position: absolute; left: 7px; top: 7px; font-size: 8.5px; font-weight: 800; color: #fff;
+        background: rgba(12,18,90,0.75); padding: 1px 4px; border-radius: 4px;
+      }
+      .cap .t {
+        position: absolute; left: 7px; bottom: 7px; font-size: 9px; font-weight: 600; color: #fff;
+        background: rgba(12,18,90,0.75); padding: 1px 5px; border-radius: 999px;
+      }
+
+      #empty { display: flex; align-items: center; justify-content: center; width: 100%;
+        color: #8b98e0; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <div class="head">
+        <span class="dot"></span>
+        <span id="title">붙여넣을 사진을 선택해주세요</span>
+        <span class="grow"></span>
+        <kbd>Ctrl+클릭</kbd><span>여러 장</span>
+        <kbd>Enter</kbd><span>붙여넣기</span>
+        <kbd>Esc</kbd><span>닫기</span>
+      </div>
+      <div id="strip">
+        <div id="empty">캡처한 항목이 없습니다.</div>
+      </div>
+    </div>
+    <script src="./quickpaste.js"></script>
+  </body>
+</html>

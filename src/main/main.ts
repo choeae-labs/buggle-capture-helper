@@ -8,6 +8,7 @@ import { store } from "./store";
 import { startServer, stopServer } from "./server";
 import { captureFullScreen, captureRegion, captureFixed, setFixedRegion } from "./capture";
 import { initRecorder, isRecording, registerRecorderIpc, startRecording, stopRecording } from "./recorder";
+import { focusAndPaste, getForegroundWindow } from "./win-paste";
 
 // 숨은/화면 밖 인코더 창의 비디오 프레임이 멈추지 않도록 백그라운드 throttling·occlusion 비활성화.
 app.commandLine.appendSwitch("disable-background-timer-throttling");
@@ -19,7 +20,7 @@ let preview: BrowserWindow | null = null;
 let editor: BrowserWindow | null = null;
 let editorTargetId: string | null = null;
 
-const PREVIEW_HEADER_H = 46; // 접었을 때 남길 헤더 높이
+const PREVIEW_HEADER_H = 42; // 접었을 때 남길 헤더 높이
 let previewCollapsed = false;
 let previewExpandedHeight = 560; // 펼친 상태 높이(복원용)
 
@@ -93,6 +94,80 @@ function flashPreview() {
   preview?.webContents.send("captures", store.list());
 }
 
+/* ===== 전역 붙여넣기(어느 앱에서든 Ctrl+Shift+V) =====
+   메인 패널이 아니라, 커서 옆에 캡처 썸네일만 쭉 늘어놓는 가벼운 창을 띄운다
+   (윈도우 Win+V 클립보드 기록과 같은 결). 고르면 그 자리에 바로 붙는다. */
+let quickWin: BrowserWindow | null = null;
+// 창을 열기 직전에 쓰던 창. 붙여넣기 후 여기로 포커스를 되돌린다.
+let quickPasteTarget: string | null = null;
+
+const QUICK_W = 620;
+const QUICK_H = 168;
+
+function ensureQuickWin() {
+  if (quickWin && !quickWin.isDestroyed()) return;
+  quickWin = new BrowserWindow({
+    width: QUICK_W,
+    height: QUICK_H,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/quickpaste-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  quickWin.setAlwaysOnTop(true, "pop-up-menu"); // 다른 앱 위에 확실히 뜨도록
+  quickWin.setContentProtection(true); // 캡처에 이 창이 찍히지 않게
+  quickWin.loadFile(path.join(__dirname, "../renderer/quickpaste.html"));
+  // 다른 곳을 클릭하면(포커스 상실) 조용히 닫는다 — 고르기 창이므로 눌러붙어 있으면 방해된다.
+  quickWin.on("blur", () => hideQuickWin());
+  quickWin.on("closed", () => {
+    quickWin = null;
+  });
+}
+
+function hideQuickWin() {
+  quickPasteTarget = null;
+  if (quickWin && !quickWin.isDestroyed() && quickWin.isVisible()) quickWin.hide();
+}
+
+/** 커서가 있는 화면 안쪽, 커서 바로 아래에 놓는다(다중 모니터 대응). */
+function placeQuickWin() {
+  if (!quickWin || quickWin.isDestroyed()) return;
+  const pt = screen.getCursorScreenPoint();
+  const wa = screen.getDisplayNearestPoint(pt).workArea;
+  const x = Math.max(wa.x + 8, Math.min(pt.x - QUICK_W / 2, wa.x + wa.width - QUICK_W - 8));
+  // 아래에 자리가 없으면 커서 위로 띄운다.
+  const below = pt.y + 18;
+  const y = below + QUICK_H + 8 <= wa.y + wa.height ? below : Math.max(wa.y + 8, pt.y - QUICK_H - 18);
+  quickWin.setPosition(Math.round(x), Math.round(y));
+}
+
+/**
+ * 전역 단축키 → 캡처 선택 창.
+ *
+ * 포커스를 뺏기 "전에" 대상 창을 기록해야 나중에 그리로 돌아가 붙여넣을 수 있다.
+ */
+async function openQuickPaste() {
+  if (isRecording()) return; // 녹화 중엔 띄우지 않는다(GIF에 찍힘)
+  if (quickWin && !quickWin.isDestroyed() && quickWin.isVisible()) {
+    hideQuickWin(); // 같은 단축키를 다시 누르면 닫기(토글)
+    return;
+  }
+  const target = await getForegroundWindow();
+  ensureQuickWin();
+  quickPasteTarget = target;
+  placeQuickWin();
+  quickWin?.show();
+  quickWin?.focus();
+  quickWin?.webContents.send("quick:show", store.list());
+}
+
 /* ===== 녹화(GIF) ===== */
 /** recorder 상태 변화 훅 — 녹화 중엔 preview를 숨겨 GIF에 안 찍히게, 끝나면 다시 표시. */
 function setRecordingUi(recording: boolean) {
@@ -117,8 +192,8 @@ function ensurePreview() {
   if (preview && !preview.isDestroyed()) return;
   const cfg = loadConfig();
   const primary = screen.getPrimaryDisplay().workArea;
-  const width = cfg.preview.w ?? 300;
-  const height = cfg.preview.h ?? 560;
+  const width = cfg.preview.w ?? 360;
+  const height = cfg.preview.h ?? 520;
   previewExpandedHeight = height;
   const x = cfg.preview.x ?? primary.x + primary.width - width - 24;
   const y = cfg.preview.y ?? primary.y + primary.height - height - 24;
@@ -128,8 +203,8 @@ function ensurePreview() {
     y,
     width,
     height,
-    minWidth: 240,
-    minHeight: 220,
+    minWidth: 320,
+    minHeight: 200,
     frame: false,
     transparent: true,
     resizable: true,
@@ -224,6 +299,7 @@ function registerHotkeys() {
     [hotkeys.fixed, () => runCapture("fixed")],
     [hotkeys.setFixed, () => runCapture("setFixed")],
     [hotkeys.record, () => runRecord("full")],
+    [hotkeys.pastePicker, () => void openQuickPaste()],
   ];
   for (const [accel, fn] of map) {
     if (!accel) continue; // "없음"(빈 문자열) → 등록 안 함
@@ -286,49 +362,74 @@ function buildTray() {
 }
 
 /* ===== IPC (preview 렌더러 ↔ main) ===== */
+/** 1장 → 비트맵으로 클립보드에(어떤 앱에나 이미지로 붙는다). */
+function copyOne(id: string): boolean {
+  const fp = store.filePath(id);
+  if (!fp) return false;
+  let img = nativeImage.createFromPath(fp);
+  // GIF 등은 createFromPath가 빈 이미지를 줄 수 있음 → 썸네일(PNG)로 폴백.
+  if (img.isEmpty()) {
+    const tp = store.thumbPath(id);
+    if (tp) img = nativeImage.createFromPath(tp);
+  }
+  if (img.isEmpty()) return false;
+  clipboard.writeImage(img);
+  return true;
+}
+
+/** 여러 장 → 파일 목록(CF_HDROP)으로 클립보드에. 브라우저 Ctrl+V 시 여러 File로 전달됨(GIF 애니메이션 유지). */
+async function copyMany(ids: string[]): Promise<boolean> {
+  const paths = ids.map((id) => store.filePath(id)).filter((p): p is string => !!p && fs.existsSync(p));
+  if (paths.length === 0) return false;
+  if (process.platform === "win32") {
+    // PowerShell Set-Clipboard -LiteralPath (경로의 홑따옴표는 '' 로 escape).
+    const quoted = paths.map((p) => `'${p.replace(/'/g, "''")}'`).join(",");
+    return await new Promise<boolean>((resolve) => {
+      execFile(
+        "powershell",
+        ["-NoProfile", "-NonInteractive", "-Command", `Set-Clipboard -LiteralPath ${quoted}`],
+        (err) => {
+          if (err) console.warn("[copyFiles] Set-Clipboard 실패:", err.message);
+          resolve(!err);
+        },
+      );
+    });
+  }
+  // macOS 등: NSPasteboard는 여러 파일을 브라우저 붙여넣기(DataTransfer.files)로 넘겨주지 못한다.
+  // 첫 이미지만 비트맵으로 클립보드에 담는 폴백(단일 붙여넣기). 여러 장은 웹 캡처 피커로 유도한다.
+  const first = nativeImage.createFromPath(paths[0]);
+  if (!first.isEmpty()) {
+    clipboard.writeImage(first);
+    return true;
+  }
+  return false;
+}
+
+/** 선택분을 클립보드에 담는다. 1장이면 비트맵(어디에나), 여러 장이면 파일 목록. */
+function copySelection(ids: string[]): Promise<boolean> {
+  return ids.length > 1 ? copyMany(ids) : Promise.resolve(copyOne(ids[0]));
+}
+
 function registerIpc() {
   ipcMain.handle("preview:list", () => store.list());
   ipcMain.handle("preview:delete", (_e, id: string) => store.remove(id));
-  ipcMain.handle("preview:copy", (_e, id: string) => {
-    const fp = store.filePath(id);
-    if (!fp) return false;
-    let img = nativeImage.createFromPath(fp);
-    // GIF 등은 createFromPath가 빈 이미지를 줄 수 있음 → 썸네일(PNG)로 폴백.
-    if (img.isEmpty()) {
-      const tp = store.thumbPath(id);
-      if (tp) img = nativeImage.createFromPath(tp);
-    }
-    if (img.isEmpty()) return false;
-    clipboard.writeImage(img);
-    return true;
-  });
-  // 여러 장 → 파일 목록(CF_HDROP)으로 클립보드에 복사. 브라우저에 Ctrl+V 시 여러 File로 전달됨(GIF 애니메이션 유지).
-  ipcMain.handle("preview:copyFiles", async (_e, ids: string[]) => {
-    const paths = ids.map((id) => store.filePath(id)).filter((p): p is string => !!p && fs.existsSync(p));
-    if (paths.length === 0) return false;
-    if (process.platform === "win32") {
-      // Windows: CF_HDROP(파일 목록)로 클립보드에 담아 브라우저 Ctrl+V 시 여러 File로 붙는다.
-      // PowerShell Set-Clipboard -LiteralPath (경로의 홑따옴표는 '' 로 escape).
-      const quoted = paths.map((p) => `'${p.replace(/'/g, "''")}'`).join(",");
-      return await new Promise<boolean>((resolve) => {
-        execFile(
-          "powershell",
-          ["-NoProfile", "-NonInteractive", "-Command", `Set-Clipboard -LiteralPath ${quoted}`],
-          (err) => {
-            if (err) console.warn("[copyFiles] Set-Clipboard 실패:", err.message);
-            resolve(!err);
-          },
-        );
-      });
-    }
-    // macOS 등: NSPasteboard는 여러 파일을 브라우저 붙여넣기(DataTransfer.files)로 넘겨주지 못한다.
-    // 첫 이미지만 비트맵으로 클립보드에 담는 폴백(단일 붙여넣기). 여러 장은 웹 캡처 피커로 유도한다.
-    const first = nativeImage.createFromPath(paths[0]);
-    if (!first.isEmpty()) {
-      clipboard.writeImage(first);
-      return true;
-    }
-    return false;
+  ipcMain.handle("preview:copy", (_e, id: string) => copyOne(id));
+  ipcMain.handle("preview:copyFiles", (_e, ids: string[]) => copyMany(ids));
+  // 빠른 붙여넣기 창.
+  ipcMain.handle("quick:list", () => store.list());
+  ipcMain.on("quick:cancel", () => hideQuickWin());
+  // 클립보드에 담고 → 창을 숨긴 뒤 → 직전 창으로 돌아가 Ctrl+V를 대신 눌러준다.
+  ipcMain.handle("quick:paste", async (_e, ids: string[]) => {
+    if (ids.length === 0) return false;
+    const copied = await copySelection(ids);
+    if (!copied) return false;
+    const target = quickPasteTarget;
+    quickPasteTarget = null;
+    // 우리 창이 앞에 있으면 대상 창으로 포커스가 안 돌아간다 → 먼저 숨긴다.
+    if (quickWin && !quickWin.isDestroyed()) quickWin.hide();
+    for (const id of ids) store.markUsed(id); // 붙여넣은 캡처는 "첨부됨"으로
+    // 실패해도 클립보드엔 남아 있으므로 사용자가 직접 Ctrl+V 하면 된다.
+    return await focusAndPaste(target);
   });
   ipcMain.handle("preview:capture", (_e, kind: "full" | "region" | "fixed") => runCapture(kind));
   ipcMain.handle("preview:record", (_e, kind: "full" | "region") => runRecord(kind === "region" ? "region" : "full"));

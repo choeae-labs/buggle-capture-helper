@@ -318,8 +318,50 @@
     const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 / scale });
     await ipcRenderer.invoke("editor:save", dataUrlToBytes(dataUrl));
   }
-  function cancel() {
-    if (histIdx > 0 && !window.confirm("편집한 내용을 저장하지 않고 닫을까요?")) return;
+  // window.confirm 대체: 편집 창 안에 디자인된 확인 대화상자를 띄운다.
+  function askConfirm(msg: string, sub: string, yesLabel: string): Promise<boolean> {
+    const box = document.getElementById("confirm") as HTMLElement;
+    document.getElementById("cf-msg")!.textContent = msg;
+    document.getElementById("cf-sub")!.textContent = sub;
+    const yes = document.getElementById("cf-yes") as HTMLButtonElement;
+    const no = document.getElementById("cf-no") as HTMLButtonElement;
+    yes.textContent = yesLabel;
+    box.classList.remove("hidden");
+    yes.focus();
+    return new Promise<boolean>((resolve) => {
+      const done = (v: boolean) => {
+        box.classList.add("hidden");
+        yes.removeEventListener("click", onYes);
+        no.removeEventListener("click", onNo);
+        box.removeEventListener("mousedown", onBack);
+        window.removeEventListener("keydown", onKey, true);
+        resolve(v);
+      };
+      const onYes = () => done(true);
+      const onNo = () => done(false);
+      const onBack = (e: MouseEvent) => {
+        if (e.target === box) done(false);
+      };
+      const onKey = (e: KeyboardEvent) => {
+        e.stopPropagation();
+        if (e.key === "Escape") { e.preventDefault(); done(false); }
+        else if (e.key === "Enter") { e.preventDefault(); done(true); }
+      };
+      yes.addEventListener("click", onYes);
+      no.addEventListener("click", onNo);
+      box.addEventListener("mousedown", onBack);
+      window.addEventListener("keydown", onKey, true);
+    });
+  }
+  let confirmOpen = false;
+  async function cancel() {
+    if (histIdx > 0) {
+      if (confirmOpen) return; // Esc 연타로 중복 오픈 방지
+      confirmOpen = true;
+      const ok = await askConfirm("편집한 내용을 저장하지 않고 닫을까요?", "지금까지 편집한 내용이 사라집니다.", "저장 안 함");
+      confirmOpen = false;
+      if (!ok) return;
+    }
     void ipcRenderer.invoke("editor:cancel");
   }
 

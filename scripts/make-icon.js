@@ -4,16 +4,21 @@ const { app, BrowserWindow } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 
+// 새 브랜드 마크(buggle_capture.svg) — 오렌지 타일 + 화이트 b 벌레 + 네이비 캡처 브래킷
 const SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" fill="none">' +
-  '<rect width="240" height="240" rx="48" fill="#FFFFFF"/>' +
-  '<path d="M98 52 L112 86" stroke="#10376A" stroke-width="11" stroke-linecap="round"/>' +
-  '<path d="M142 52 L128 86" stroke="#10376A" stroke-width="11" stroke-linecap="round"/>' +
-  '<ellipse cx="120" cy="150" rx="86" ry="78" fill="#FF8500"/>' +
-  '<circle cx="120" cy="86" r="28" fill="#10376A"/>' +
-  '<path d="M120 86 V226" stroke="#10376A" stroke-width="10" stroke-linecap="round"/>' +
-  '<circle cx="80" cy="138" r="14" fill="#10376A"/><circle cx="160" cy="138" r="14" fill="#10376A"/>' +
-  '<circle cx="90" cy="186" r="12" fill="#10376A"/><circle cx="150" cy="186" r="12" fill="#10376A"/></svg>';
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000">' +
+  '<defs><clipPath id="tile"><rect width="1000" height="1000" rx="200"/></clipPath></defs>' +
+  '<g clip-path="url(#tile)">' +
+  '<rect width="1000" height="1000" fill="#e96b33"/>' +
+  '<path fill="#fdfefd" d="M502.5,445.2c-29,0-56.4,7.1-80.5,19.8v-66.8c0-25.7-20.8-46.5-46.5-46.5c-25.7,0-46.5,20.8-46.5,46.5v220.5c0,4.6,0.2,9.2,0.5,13.7c0.5,6,1.2,11.9,2.3,17.8v0c0,0,0,0,0,0c14.8,80.8,85.6,142,170.6,142c95.8,0,173.5-77.7,173.5-173.5S598.3,445.2,502.5,445.2z M584.2,618.9c0,44.9-36.4,81.6-80.7,81.9c-39.1,0.3-70.1-28-78.6-62.4v0c-1.5-6.2-2.4-12.6-2.3-19.1c0-7.1,0.9-14.1,2.6-20.7c9-35.3,40.3-61.5,78.9-61.4C550.1,537.3,584.9,577.1,584.2,618.9z"/>' +
+  '<circle fill="#091e7b" cx="376.1" cy="282.2" r="47.1"/>' +
+  '<circle fill="#091e7b" cx="512.8" cy="282.2" r="47.1"/>' +
+  '<g fill="none" stroke="#091e7b" stroke-width="52" stroke-linecap="round" stroke-linejoin="round">' +
+  '<polyline points="155,258.5 155,151.1 258.8,151.1"/>' +
+  '<polyline points="846,258.5 846,151.1 742.2,151.1"/>' +
+  '<polyline points="155,741.9 155,849.3 258.8,849.3"/>' +
+  '<polyline points="846,741.9 846,849.3 742.2,849.3"/>' +
+  '</g></g></svg>';
 
 const SIZES = [16, 24, 32, 48, 64, 128, 256];
 

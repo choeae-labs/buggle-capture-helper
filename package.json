@@ -14,7 +14,7 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "make-icon": "electron scripts/make-icon.js",
-    "dist": "npm run build && electron-builder --win",
+    "dist": "npm run make-icon && npm run build && electron-builder --win",
     "dist:mac": "npm run make-icon && npm run build && electron-builder --mac"
   },
   "dependencies": {
@@ -61,6 +61,7 @@
       "target": [
         "nsis"
       ],
+      "icon": "build/icon.ico",
       "artifactName": "BuggleCaptureSetup.${ext}"
     },
     "mac": {

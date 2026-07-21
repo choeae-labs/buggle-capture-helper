@@ -409,7 +409,7 @@ declare const bc: Bc;
     { key: "fixed", label: "고정된 사각 영역 캡처하기" },
     { key: "setFixed", label: "고정 영역 다시 지정하기" },
     { key: "record", label: "화면 녹화하기 (GIF)" },
-    { key: "pastePicker", label: "캡처 골라 붙여넣기 (어디서나)" },
+    { key: "pastePicker", label: "빠른 붙여넣기 창 열기 (어디서나)" },
   ];
 
   // KeyboardEvent.code → Electron accelerator 키 이름("" = 등록 불가 키).

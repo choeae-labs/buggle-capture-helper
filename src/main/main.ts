@@ -134,6 +134,7 @@ function ensureQuickWin() {
 
 function hideQuickWin() {
   quickPasteTarget = null;
+  hideZoomWin(); // 스트립을 닫으면 확대 미리보기도 닫는다
   if (quickWin && !quickWin.isDestroyed() && quickWin.isVisible()) quickWin.hide();
 }
 
@@ -213,17 +214,26 @@ function hideZoomWin() {
   if (zoomWin && !zoomWin.isDestroyed() && zoomWin.isVisible()) zoomWin.hide();
 }
 
-/** 확대 창을 이미지 비율대로 크게(화면 70% 상한) 잡고, 패널 옆에 배치한다. */
-function showZoomWin(id: string, anchor: { x: number; y: number; w: number; h: number }) {
-  if (!preview || preview.isDestroyed()) return;
+/**
+ * 확대 창을 이미지 비율대로 크게(화면 52% 상한) 잡고 소스 창 근처에 배치한다.
+ * - src: 앵커 좌표의 기준 창(preview 패널 또는 quickpaste 스트립). anchor는 그 창 내부 좌표.
+ * - mode "side": 소스 창의 좌/우에 배치(우하단 패널용). "stack": 앵커 위/아래(가로 스트립용).
+ */
+function showZoomWin(
+  id: string,
+  anchor: { x: number; y: number; w: number; h: number },
+  src: BrowserWindow | null,
+  mode: "side" | "stack",
+) {
+  if (!src || src.isDestroyed()) return;
   const it = store.list().find((x) => x.id === id);
   if (!it) return;
   const url = zoomImageUrl(it);
   if (!url) return;
 
   ensureZoomWin();
-  const pb = preview.getBounds();
-  const wa = screen.getDisplayNearestPoint({ x: pb.x, y: pb.y }).workArea;
+  const sb = src.getBounds();
+  const wa = screen.getDisplayNearestPoint({ x: sb.x, y: sb.y }).workArea;
   const iw = it.width && it.width > 0 ? it.width : 800;
   const ih = it.height && it.height > 0 ? it.height : 600;
   const PAD = 12; // 테두리·그림자 여백
@@ -233,14 +243,25 @@ function showZoomWin(id: string, anchor: { x: number; y: number; w: number; h: n
   const winW = Math.round(iw * scale) + PAD * 2;
   const winH = Math.round(ih * scale) + PAD * 2;
 
-  // 패널 왼쪽에 우선 배치(패널이 보통 우하단). 자리 없으면 오른쪽.
-  let x = pb.x - winW - 10;
-  if (x < wa.x + 6) x = pb.x + pb.width + 10;
-  x = Math.max(wa.x + 6, Math.min(x, wa.x + wa.width - winW - 6));
-  // 세로: 앵커(썸네일) 중앙에 맞춤 → 화면 안으로 클램프.
-  const anchorMidY = pb.y + anchor.y + anchor.h / 2;
-  let y = Math.round(anchorMidY - winH / 2);
-  y = Math.max(wa.y + 6, Math.min(y, wa.y + wa.height - winH - 6));
+  let x: number;
+  let y: number;
+  if (mode === "side") {
+    // 소스 창 왼쪽에 우선 배치(패널이 보통 우하단). 자리 없으면 오른쪽.
+    x = sb.x - winW - 10;
+    if (x < wa.x + 6) x = sb.x + sb.width + 10;
+    x = Math.max(wa.x + 6, Math.min(x, wa.x + wa.width - winW - 6));
+    const anchorMidY = sb.y + anchor.y + anchor.h / 2; // 앵커 중앙에 세로 맞춤
+    y = Math.round(anchorMidY - winH / 2);
+    y = Math.max(wa.y + 6, Math.min(y, wa.y + wa.height - winH - 6));
+  } else {
+    // 앵커(썸네일) 중앙에 가로 맞춤, 스트립 위에 우선 배치. 자리 없으면 아래.
+    const anchorMidX = sb.x + anchor.x + anchor.w / 2;
+    x = Math.round(anchorMidX - winW / 2);
+    x = Math.max(wa.x + 6, Math.min(x, wa.x + wa.width - winW - 6));
+    y = sb.y + anchor.y - winH - 10; // 위
+    if (y < wa.y + 6) y = sb.y + anchor.y + anchor.h + 10; // 아래
+    y = Math.max(wa.y + 6, Math.min(y, wa.y + wa.height - winH - 6));
+  }
 
   zoomWin!.setBounds({ x, y, width: winW, height: winH });
   zoomWin!.webContents.send("zoom:img", { url, isGif: it.kind === "gif" });
@@ -631,8 +652,15 @@ function registerIpc() {
     return { port: c.port, token: c.token };
   });
   // 확대 미리보기 창(패널 밖 별도 창).
-  ipcMain.on("zoom:show", (_e, id: string, anchor: { x: number; y: number; w: number; h: number }) => showZoomWin(id, anchor));
+  ipcMain.on("zoom:show", (_e, id: string, anchor: { x: number; y: number; w: number; h: number }) =>
+    showZoomWin(id, anchor, preview, "side"),
+  );
   ipcMain.on("zoom:hide", () => hideZoomWin());
+  // 빠른 붙여넣기 창의 확대 미리보기 — 스트립 위/아래에 배치.
+  ipcMain.on("quick-zoom:show", (_e, id: string, anchor: { x: number; y: number; w: number; h: number }) =>
+    showZoomWin(id, anchor, quickWin, "stack"),
+  );
+  ipcMain.on("quick-zoom:hide", () => hideZoomWin());
   // store 변경 시 preview 갱신
   store.on("change", () => {
     if (preview && !preview.isDestroyed()) preview.webContents.send("captures", store.list());

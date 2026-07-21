@@ -12,6 +12,8 @@ interface Qp {
   conn: () => Promise<{ port: number; token: string }>;
   paste: (ids: string[]) => Promise<boolean>;
   cancel: () => void;
+  showZoom: (id: string, anchor: { x: number; y: number; w: number; h: number }) => void;
+  hideZoom: () => void;
   onShow: (cb: (items: QpItem[]) => void) => () => void;
 }
 declare const qp: Qp;
@@ -64,6 +66,7 @@ declare const qp: Qp;
   }
 
   function render(next: QpItem[]) {
+    hideZoom(); // 목록 재생성 시 앵커(썸네일 DOM)가 사라지므로 미리보기 닫기
     items = next;
     selected.length = 0;
     cursor = 0;
@@ -97,7 +100,35 @@ declare const qp: Qp;
     await qp.paste(selected.slice()); // main이 클립보드에 담고 직전 창으로 돌아가 Ctrl+V
   }
 
-  // 클릭 = 그 자리에서 바로 붙여넣기. Ctrl/⌘+클릭 = 여러 장 모으기(Enter로 확정).
+  /* ===== 확대 미리보기(패널과 동일) =====
+     0.8초 hover 또는 "이미 선택된 항목 재클릭" → 원본을 별도 창으로 크게 띄운다(main이 표시). */
+  const HOVER_DELAY = 800;
+  let zoomId: string | null = null;
+  let hoverId: string | null = null;
+  let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearHoverTimer() {
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
+  function hideZoom() {
+    clearHoverTimer();
+    hoverId = null;
+    if (!zoomId) return;
+    zoomId = null;
+    qp.hideZoom();
+  }
+  function showZoom(id: string) {
+    const el = stripEl.querySelector(`.cap[data-id="${id}"]`) as HTMLElement | null;
+    if (!el) return;
+    clearHoverTimer();
+    zoomId = id;
+    const r = el.getBoundingClientRect();
+    qp.showZoom(id, { x: r.left, y: r.top, w: r.width, h: r.height }); // main이 창 위치를 더해 화면 좌표로
+  }
+
+  // 클릭: 이미 선택된 항목 재클릭 → 미리보기 토글. 미선택 항목 → 선택+바로 붙여넣기.
+  //       Ctrl/⌘+클릭 → 여러 장 모으기(Enter로 확정).
   stripEl.addEventListener("click", (e) => {
     const el = (e.target as HTMLElement).closest(".cap") as HTMLElement | null;
     if (!el) return;
@@ -111,16 +142,45 @@ declare const qp: Qp;
       paintCursor();
       return;
     }
+    // 이미 선택된 항목을 (수식키 없이) 다시 클릭 → 붙여넣기 대신 미리보기 토글(패널과 동일).
+    if (selected.includes(id)) {
+      if (zoomId === id) hideZoom();
+      else showZoom(id);
+      return;
+    }
+    hideZoom();
     selected.length = 0;
     selected.push(id);
     paintSelection();
     void paste();
   });
 
+  // 0.8초 hover → 미리보기. 다른 썸네일로 이동하면 이전 타이머 취소.
+  stripEl.addEventListener("mouseover", (e) => {
+    const el = (e.target as HTMLElement).closest(".cap") as HTMLElement | null;
+    const id = el?.getAttribute("data-id") ?? null;
+    if (!id || id === hoverId) return;
+    clearHoverTimer();
+    hoverId = id;
+    if (zoomId && zoomId !== id) hideZoom();
+    hoverTimer = setTimeout(() => showZoom(id), HOVER_DELAY);
+  });
+  // 스트립 밖(썸네일 아님)으로 이동 → 닫기. 확대 창은 마우스를 무시하므로 안전.
+  document.addEventListener("mouseover", (e) => {
+    const el = (e.target as HTMLElement).closest(".cap") as HTMLElement | null;
+    const overId = el?.getAttribute("data-id") ?? null;
+    if (!overId) {
+      clearHoverTimer();
+      hoverId = null;
+    }
+    if (zoomId && overId !== zoomId) hideZoom();
+  });
+
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      qp.cancel();
+      if (zoomId) hideZoom(); // 미리보기가 떠 있으면 Esc는 그것부터 닫는다
+      else qp.cancel();
     } else if (e.key === "Enter") {
       e.preventDefault();
       void paste();

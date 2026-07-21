@@ -426,7 +426,9 @@ function updateTrayMenu() {
     // 업데이트 — 다운로드 완료 시 즉시 적용 메뉴 노출(상주 앱이라 '종료 시 설치'만으론 적용 기회가 없음).
     ...(updateReadyVersion
       ? [{ label: `⬆ 업데이트 적용하고 재시작 (v${updateReadyVersion})`, click: () => applyUpdateNow() }]
-      : [{ label: "업데이트 확인", click: () => void manualCheckForUpdates() }]),
+      : macLatestVersion
+        ? [{ label: `⬆ 새 버전 v${macLatestVersion} — 업데이트 방법`, click: () => showMacUpdateHelp() }]
+        : [{ label: "업데이트 확인", click: () => void manualCheckForUpdates() }]),
     { type: "separator" },
     { label: `API 포트: ${cfg.port} · v${app.getVersion()}`, enabled: false },
     { label: "종료", click: () => app.quit() },
@@ -648,16 +650,64 @@ function protocolUrlFromArgv(argv: string[]): string | null {
 /** 자동 업데이트 — 설치 빌드에서만. 새 버전을 조용히 받아 다음 종료/재시작 시 적용. */
 /** 상주 앱이라 시작 시 1회 확인만으론 새 버전을 영영 못 본다 → 주기적으로 재확인. */
 const UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2시간
-let updateReadyVersion: string | null = null; // 다운로드 완료된 새 버전(트레이 '적용' 메뉴용)
+const UPDATE_REPO = "choeae-labs/buggle-capture-helper";
+const BREW_UPGRADE_CMD = "brew upgrade --cask buggle-capture-helper";
+let updateReadyVersion: string | null = null; // (Win) 다운로드 완료된 새 버전 — 트레이 '적용' 메뉴용
+let macLatestVersion: string | null = null; // (Mac) GitHub 릴리스에서 발견한 새 버전 — 트레이 '방법' 메뉴용
 
 /** 자동 업데이트 지원 여부(설치 빌드 + Windows). */
 function canAutoUpdate(): boolean {
   // macOS는 Developer ID 코드서명 없이는 electron-updater(Squirrel.Mac)가 서명 검증에서 실패한다.
-  // 서명 붙이기 전까지 mac은 자동업데이트를 끄고 Homebrew(brew upgrade)로 갱신한다.
+  // 서명 붙이기 전까지 mac은 자동업데이트를 끄고 Homebrew(brew upgrade)로 갱신한다(→ 알림만 제공).
   return app.isPackaged && process.platform !== "darwin";
 }
 
+/** a가 b보다 높은 버전인가(semver x.y.z, 접두 v 무시). */
+function isNewerVersion(a: string, b: string): boolean {
+  const pa = a.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return true;
+    if ((pa[i] || 0) < (pb[i] || 0)) return false;
+  }
+  return false;
+}
+
+/** (Mac) GitHub 릴리스의 최신 태그를 현재 버전과 비교 — 새 버전이면 알림 + 트레이 표시. 서명 불필요. */
+async function checkMacUpdate(): Promise<void> {
+  if (!app.isPackaged || process.platform !== "darwin") return;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+      headers: { "User-Agent": "buggle-capture-helper", Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { tag_name?: string };
+    const latest = String(data.tag_name || "").replace(/^v/, "");
+    if (!latest || !isNewerVersion(latest, app.getVersion())) return;
+    const first = macLatestVersion !== latest;
+    macLatestVersion = latest;
+    updateTrayMenu(); // 트레이에 "새 버전 — 업데이트 방법" 노출
+    if (first) notify("새 버전 있음", `buggle Capture ${latest} — 트레이 메뉴 '업데이트 방법'을 눌러주세요.`);
+  } catch (e) {
+    console.warn("[updater/mac] 확인 실패:", e);
+  }
+}
+
+/** (Mac) 업데이트 방법 안내 — brew 명령을 클립보드에 복사(사용자가 터미널에 붙여넣어 실행). */
+function showMacUpdateHelp(): void {
+  clipboard.writeText(BREW_UPGRADE_CMD);
+  notify("업데이트 명령 복사됨", `터미널에 붙여넣어 실행하세요: ${BREW_UPGRADE_CMD} (권한은 다시 허용)`);
+}
+
 function checkForUpdates() {
+  // macOS: 자동설치는 못 하지만 '새 버전 알림'은 GitHub 릴리스 확인으로 제공.
+  if (process.platform === "darwin") {
+    if (!app.isPackaged) return;
+    const run = () => void checkMacUpdate();
+    run(); // 시작 시 1회
+    setInterval(run, UPDATE_CHECK_INTERVAL_MS); // 이후 주기적으로
+    return;
+  }
   if (!canAutoUpdate()) return;
   try {
     const { autoUpdater } = electronUpdater;
@@ -690,7 +740,13 @@ function applyUpdateNow() {
 /** 트레이 '업데이트 확인' — 사용자가 직접 확인하고 결과를 알림으로 받는다. */
 async function manualCheckForUpdates() {
   if (!app.isPackaged) return notify("업데이트 확인", "개발 모드에선 지원하지 않아요.");
-  if (process.platform === "darwin") return notify("업데이트 확인", "macOS는 brew upgrade로 갱신해주세요.");
+  if (process.platform === "darwin") {
+    await checkMacUpdate();
+    if (macLatestVersion) {
+      return notify("업데이트 발견", `새 버전 ${macLatestVersion} — 트레이의 '업데이트 방법'을 눌러 brew 명령을 복사하세요.`);
+    }
+    return notify("업데이트 확인", `최신 버전입니다 (v${app.getVersion()}).`);
+  }
   if (updateReadyVersion) {
     return notify("업데이트 준비됨", `새 버전 ${updateReadyVersion} — 트레이의 '업데이트 적용하고 재시작'을 눌러주세요.`);
   }

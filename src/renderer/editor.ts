@@ -36,7 +36,8 @@
   }
   function snapshot() {
     if (restoring) return;
-    const snap: Snap = { json: JSON.stringify(fc.toJSON()), scale, width: fc.getWidth(), height: fc.getHeight() };
+    // 크기는 항상 맞춤(100%) 기준으로 저장 — 확대 상태(fc.getWidth=맞춤×zoom)를 기록하지 않는다.
+    const snap: Snap = { json: JSON.stringify(fc.toJSON()), scale, width: fitW, height: fitH };
     history = history.slice(0, histIdx + 1);
     history.push(snap);
     if (history.length > MAX_HISTORY) history.shift();
@@ -46,8 +47,13 @@
   async function loadState(snap: Snap) {
     restoring = true;
     scale = snap.scale;
-    fc.setDimensions({ width: snap.width, height: snap.height });
+    fitW = snap.width;
+    fitH = snap.height;
+    fc.setDimensions({ width: fitW, height: fitH });
     await fc.loadFromJSON(snap.json);
+    // 현재 확대 배율을 유지한 채 복원(캔버스 크기 = 맞춤 × zoom).
+    fc.setDimensions({ width: Math.round(fitW * viewZoom), height: Math.round(fitH * viewZoom) });
+    fc.setZoom(viewZoom);
     fc.renderAll();
     restoring = false;
     updateUndoRedo();
@@ -77,11 +83,110 @@
     const natH = img.height as number;
     const { maxW, maxH } = maxDims();
     scale = Math.min(maxW / natW, maxH / natH, MAX_UPSCALE);
-    fc.setDimensions({ width: Math.round(natW * scale), height: Math.round(natH * scale) });
+    fitW = Math.round(natW * scale);
+    fitH = Math.round(natH * scale);
+    fc.setDimensions({ width: fitW, height: fitH });
     img.set({ selectable: false, evented: false, scaleX: scale, scaleY: scale, left: 0, top: 0 });
     fc.backgroundImage = img;
+    resetZoom(); // 새 이미지/자르기 후 100%로
     fc.renderAll();
   }
+
+  /* ===== 화면 확대/축소 =====
+     캔버스 요소 자체를 키운다(맞춤크기 × zoom). 확대하면 편집기(스테이지) 전체 영역을 쓰고,
+     넘치면 스테이지가 스크롤된다. 도형은 scene 좌표라 저장엔 영향 없다(export 직전 100%로 되돌림). */
+  const MIN_ZOOM = 0.25;
+  const MAX_ZOOM = 8;
+  let fitW = 0; // 100%(맞춤) 캔버스 크기 — 최초 이미지 로드 때 결정
+  let fitH = 0;
+  let viewZoom = 1;
+  const stageEl = document.getElementById("stage") as HTMLElement;
+
+  function updateZoomLabel() {
+    const el = document.getElementById("zoomPct");
+    if (el) el.textContent = `${Math.round(viewZoom * 100)}%`;
+  }
+  function clampZoom(z: number): number {
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+  }
+  /** 캔버스 크기=맞춤×zoom, fabric zoom=zoom. 앵커(화면 좌표) 아래 지점을 고정한 채 확대. */
+  function applyZoom(z: number, anchorClientX?: number, anchorClientY?: number) {
+    if (!fitW || !fitH) return;
+    const rect = stageEl.getBoundingClientRect();
+    const ax = anchorClientX ?? rect.left + rect.width / 2;
+    const ay = anchorClientY ?? rect.top + rect.height / 2;
+    const beforeW = fitW * viewZoom;
+    const beforeH = fitH * viewZoom;
+    // 확대 전 앵커 아래 콘텐츠 지점(0~1 비율).
+    const cx = beforeW > 0 ? (stageEl.scrollLeft + (ax - rect.left)) / beforeW : 0.5;
+    const cy = beforeH > 0 ? (stageEl.scrollTop + (ay - rect.top)) / beforeH : 0.5;
+
+    viewZoom = clampZoom(z);
+    fc.setDimensions({ width: Math.round(fitW * viewZoom), height: Math.round(fitH * viewZoom) });
+    fc.setZoom(viewZoom);
+    fc.requestRenderAll();
+    updateZoomLabel();
+
+    // 확대 후 같은 콘텐츠 지점이 앵커 아래에 오도록 스크롤 보정.
+    stageEl.scrollLeft = cx * fitW * viewZoom - (ax - rect.left);
+    stageEl.scrollTop = cy * fitH * viewZoom - (ay - rect.top);
+  }
+  function resetZoom() {
+    viewZoom = 1;
+    fc.setDimensions({ width: fitW, height: fitH });
+    fc.setZoom(1);
+    updateZoomLabel();
+  }
+  /** export(toDataURL) 동안 100%(맞춤)로 되돌려 확대 상태가 저장에 섞이지 않게 한다. */
+  function withExportView<T>(fn: () => T): T {
+    const z = viewZoom;
+    fc.setDimensions({ width: fitW, height: fitH });
+    fc.setZoom(1);
+    try {
+      return fn();
+    } finally {
+      fc.setDimensions({ width: Math.round(fitW * z), height: Math.round(fitH * z) });
+      fc.setZoom(z);
+      fc.requestRenderAll();
+    }
+  }
+
+  // Ctrl+휠 → 커서 지점 기준 확대/축소. Ctrl 없으면 기본 스크롤 유지.
+  fc.on("mouse:wheel", (opt: any) => {
+    if (!opt.e.ctrlKey) return;
+    opt.e.preventDefault();
+    opt.e.stopPropagation();
+    applyZoom(viewZoom * 0.999 ** opt.e.deltaY, opt.e.clientX, opt.e.clientY);
+  });
+
+  document.getElementById("zoomIn")!.addEventListener("click", () => applyZoom(viewZoom * 1.2));
+  document.getElementById("zoomOut")!.addEventListener("click", () => applyZoom(viewZoom / 1.2));
+  document.getElementById("zoomPct")!.addEventListener("click", () => resetZoom()); // 클릭 → 100%
+
+  /* ===== Space+드래그로 스테이지 스크롤(팬) ===== */
+  let spaceDown = false;
+  let panning = false;
+  let panLast = { x: 0, y: 0 };
+  function isEditingText(): boolean {
+    const o = fc.getActiveObject();
+    return !!(o && o.isEditing);
+  }
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space" && !isEditingText()) {
+      e.preventDefault(); // 스테이지 스크롤 점프 방지
+      spaceDown = true;
+      fc.defaultCursor = "grab";
+      fc.setCursor("grab");
+    }
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.code === "Space") {
+      spaceDown = false;
+      panning = false;
+      fc.defaultCursor = "default";
+      fc.setCursor("default");
+    }
+  });
 
   /* ===== 도형 팩토리 ===== */
   function makeArrow(x1: number, y1: number, x2: number, y2: number, col: string) {
@@ -154,6 +259,13 @@
   }
 
   fc.on("mouse:down", (opt: any) => {
+    if (spaceDown) {
+      // 팬 시작 — 도구 동작 대신 화면 이동.
+      panning = true;
+      panLast = { x: opt.e.clientX, y: opt.e.clientY };
+      fc.setCursor("grabbing");
+      return;
+    }
     if (tool === "select") return;
     const p = fc.getScenePoint(opt.e);
     if (tool === "stamp") {
@@ -195,6 +307,13 @@
   });
 
   fc.on("mouse:move", (opt: any) => {
+    if (panning) {
+      // 스테이지 스크롤로 이동(캔버스가 스테이지보다 크면 스크롤됨).
+      stageEl.scrollLeft -= opt.e.clientX - panLast.x;
+      stageEl.scrollTop -= opt.e.clientY - panLast.y;
+      panLast = { x: opt.e.clientX, y: opt.e.clientY };
+      return;
+    }
     if (!drawing || !temp) return;
     const p = fc.getScenePoint(opt.e);
     if (tool === "arrow") {
@@ -206,6 +325,11 @@
   });
 
   fc.on("mouse:up", (opt: any) => {
+    if (panning) {
+      panning = false;
+      fc.setCursor(spaceDown ? "grab" : "default");
+      return;
+    }
     if (!drawing || !temp) {
       drawing = false;
       return;
@@ -245,7 +369,7 @@
 
   /* ===== 가림(모자이크/블러) ===== */
   function applyRedact(left: number, top: number, w: number, h: number) {
-    const dataUrl = fc.toDataURL({ format: "png", left, top, width: w, height: h, multiplier: 1 });
+    const dataUrl = withExportView(() => fc.toDataURL({ format: "png", left, top, width: w, height: h, multiplier: 1 }));
     const src = new Image();
     src.onload = () => {
       const out = document.createElement("canvas");
@@ -285,7 +409,7 @@
     const w = cropRect.width;
     const h = cropRect.height;
     clearCrop();
-    const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 / scale, left, top, width: w, height: h });
+    const dataUrl = withExportView(() => fc.toDataURL({ format: "png", multiplier: 1 / scale, left, top, width: w, height: h }));
     fc.remove(...fc.getObjects());
     await loadImage(dataUrl);
     setTool("select");
@@ -315,7 +439,7 @@
     (document.getElementById("done") as HTMLButtonElement).disabled = true;
     fc.discardActiveObject();
     fc.renderAll();
-    const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 / scale });
+    const dataUrl = withExportView(() => fc.toDataURL({ format: "png", multiplier: 1 / scale }));
     await ipcRenderer.invoke("editor:save", dataUrlToBytes(dataUrl));
   }
   // window.confirm 대체: 편집 창 안에 디자인된 확인 대화상자를 띄운다.
@@ -402,7 +526,7 @@
       stamp: "빈 곳을 클릭하면 번호가 찍힙니다. '다음' 번호로 시작값을 바꿀 수 있어요.",
       redact: "가릴 영역을 드래그하세요. 모자이크/블러 선택 가능.",
     };
-    (document.getElementById("hint") as HTMLElement).textContent = map[tool];
+    (document.getElementById("hint") as HTMLElement).textContent = map[tool] + "  ·  Ctrl+휠 확대/축소 · Space+드래그 이동";
   }
 
   // 색상 스와치 생성
